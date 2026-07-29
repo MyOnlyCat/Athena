@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
+from app.core.database import Base, create_engine, create_session_factory
 from app.main import create_app
 
 
@@ -23,3 +24,14 @@ def settings(tmp_path) -> Settings:
 def client(settings: Settings) -> Iterator[TestClient]:
     with TestClient(create_app(settings)) as test_client:
         yield test_client
+
+
+@pytest.fixture
+async def db_session(settings: Settings):
+    engine = create_engine(settings)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = create_session_factory(engine)
+    async with factory() as session:
+        yield session
+    await engine.dispose()

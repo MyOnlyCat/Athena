@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
+import httpx
 from fastapi import FastAPI, Request
 from starlette.exceptions import HTTPException
 from starlette.responses import Response
@@ -10,6 +11,7 @@ from starlette.responses import Response
 from app.api.v1.auth import router as auth_router
 from app.api.v1.files import router as files_router
 from app.api.v1.hosts import router as hosts_router
+from app.api.v1.tasks import router as tasks_router
 from app.api.v1.terminal import router as terminal_router
 from app.api.v1.users import router as users_router
 from app.core.config import Settings, get_settings
@@ -17,7 +19,11 @@ from app.core.database import Base, create_engine, create_session_factory
 from app.core.errors import AppError, app_error_handler, http_error_handler
 from app.core.logging import configure_logging
 from app.schemas.user import UserCreate
+from app.services.artifacts import ArtifactService
 from app.services.auth import AuthService, LoginThrottle
+from app.services.crypto import CredentialCipher
+from app.services.deployment_gateway import AsyncDeploymentGateway
+from app.services.executor import DeploymentExecutor
 from app.services.files import AsyncRemoteFiles
 from app.services.inventory_sync import InventorySynchronizer
 from app.services.master_client import MasterClient
@@ -46,6 +52,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.session_factory,
             master_client,
         )
+        artifact_http = httpx.AsyncClient(timeout=None)
+        app.state.deployment_executor = DeploymentExecutor(
+            session_factory=app.state.session_factory,
+            master_client=master_client,
+            artifact_service=ArtifactService(
+                artifact_http,
+                active_settings.data_dir / "artifacts",
+                allow_http=active_settings.allow_http_artifacts,
+            ),
+            gateway=AsyncDeploymentGateway(),
+            cipher=CredentialCipher(active_settings.credential_key),
+            concurrency=active_settings.deploy_concurrency,
+        )
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
         if active_settings.bootstrap_username and active_settings.bootstrap_password:
@@ -64,7 +83,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         stop = asyncio.Event()
         worker = None
         if master_client is not None and active_settings.environment != "test":
-            worker = asyncio.create_task(app.state.inventory_sync.run(stop))
+            await app.state.deployment_executor.recover()
+            worker = asyncio.create_task(
+                app.state.inventory_sync.run(stop, app.state.deployment_executor.poll)
+            )
         yield
         stop.set()
         app.state.inventory_sync.notify_change()
@@ -72,6 +94,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await worker
         if master_client is not None:
             await master_client.close()
+        await app.state.deployment_executor.close()
+        await artifact_http.aclose()
         await engine.dispose()
 
     app = FastAPI(
@@ -92,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(files_router, prefix="/api/v1")
     app.include_router(hosts_router, prefix="/api/v1")
     app.include_router(terminal_router, prefix="/api/v1")
+    app.include_router(tasks_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
 
     @app.middleware("http")

@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator
@@ -28,6 +29,9 @@ class Settings(BaseSettings):
     node_version: str = "0.1.0"
     master_node_url: str = ""
     node_token: str = ""
+    data_dir: Path = Path("./data")
+    allow_http_artifacts: bool = False
+    deploy_concurrency: int = Field(default=4, ge=1, le=32)
 
     @field_validator("credential_key")
     @classmethod
