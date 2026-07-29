@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     access_token_minutes: int = Field(default=30, ge=1)
     bootstrap_username: str = ""
     bootstrap_password: str = ""
+    max_upload_bytes: int = Field(default=1_073_741_824, ge=1)
 
     @field_validator("credential_key")
     @classmethod

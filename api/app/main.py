@@ -7,7 +7,9 @@ from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.files import router as files_router
 from app.api.v1.hosts import router as hosts_router
+from app.api.v1.terminal import router as terminal_router
 from app.api.v1.users import router as users_router
 from app.core.config import Settings, get_settings
 from app.core.database import Base, create_engine, create_session_factory
@@ -15,7 +17,9 @@ from app.core.errors import AppError, app_error_handler, http_error_handler
 from app.core.logging import configure_logging
 from app.schemas.user import UserCreate
 from app.services.auth import AuthService, LoginThrottle
+from app.services.files import AsyncRemoteFiles
 from app.services.ssh import AsyncSSHClient
+from app.services.terminal import AsyncTerminalGateway, TerminalTicketStore
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -53,10 +57,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = active_settings
     app.state.login_throttle = LoginThrottle()
     app.state.ssh_client = AsyncSSHClient()
+    app.state.terminal_tickets = TerminalTicketStore()
+    app.state.terminal_gateway = AsyncTerminalGateway()
+    app.state.remote_files = AsyncRemoteFiles()
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(HTTPException, http_error_handler)  # type: ignore[arg-type]
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(files_router, prefix="/api/v1")
     app.include_router(hosts_router, prefix="/api/v1")
+    app.include_router(terminal_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
 
     @app.middleware("http")
