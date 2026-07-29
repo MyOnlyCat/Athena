@@ -64,3 +64,33 @@ export interface ApiErrorBody {
   request_id: string;
   details: Record<string, unknown>;
 }
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  size: number;
+  modified_at: string | null;
+  permissions: string;
+}
+
+export interface DeploymentEvent {
+  id: number;
+  sequence: number;
+  target_id: string | null;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AuditLog {
+  id: string;
+  user_id: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  result: string;
+  source_ip: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+}

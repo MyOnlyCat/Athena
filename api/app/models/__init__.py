@@ -9,4 +9,6 @@ __all__ = [
     "Host",
     "RevokedToken",
     "User",
+    "AuditLog",
 ]
+from app.models.audit import AuditLog

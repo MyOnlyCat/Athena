@@ -28,12 +28,15 @@ AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 
 
 async def get_auth_context(
+    request: Request,
     auth: AuthServiceDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> tuple[User, dict[str, Any]]:
     if credentials is None:
         raise AppError("AUTH_REQUIRED", "请先登录", status_code=401)
-    return await auth.decode_access_token(credentials.credentials)
+    context = await auth.decode_access_token(credentials.credentials)
+    request.state.user_id = context[0].id
+    return context
 
 
 AuthContextDep = Annotated[tuple[User, dict[str, Any]], Depends(get_auth_context)]

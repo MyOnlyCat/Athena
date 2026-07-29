@@ -92,10 +92,89 @@ button, input { font: inherit; }
 .empty-page { display: grid; min-height: 60vh; place-content: center; text-align: center; }
 .empty-page h1 { margin: 0; font-size: 38px; }
 
+.terminal-page {
+  display: grid;
+  grid-template-columns: 240px minmax(420px, 1fr) 360px;
+  height: calc(100vh - 132px);
+  min-height: 600px;
+  overflow: hidden;
+  border: 1px solid #24324a;
+  border-radius: 12px;
+  background: #070b12;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .25);
+}
+.server-switcher, .file-manager { min-width: 0; background: #101827; }
+.server-switcher { border-right: 1px solid #24324a; }
+.file-manager { border-left: 1px solid #24324a; }
+.terminal-pane-heading, .terminal-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 62px; padding: 0 16px; border-bottom: 1px solid #24324a;
+}
+.terminal-pane-heading strong, .terminal-pane-heading span { display: block; }
+.terminal-pane-heading span {
+  max-width: 250px; overflow: hidden; color: #63738d; font-size: 10px;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.server-search { padding: 13px; border-bottom: 1px solid #1d293d; }
+.server-list { padding: 8px; }
+.server-item, .file-row {
+  width: 100%; border: 0; color: #dbe6f6; background: transparent; cursor: pointer;
+}
+.server-item {
+  display: grid; grid-template-columns: 10px 1fr auto; gap: 10px; align-items: center;
+  padding: 11px; border-radius: 8px; text-align: left;
+}
+.server-item:hover { background: #162137; }
+.server-item.active { background: rgba(91, 140, 255, .14); box-shadow: inset 2px 0 #5b8cff; }
+.server-item strong, .server-item small { display: block; }
+.server-item small { margin-top: 4px; color: #63738d; font-size: 10px; }
+.server-health { width: 7px; height: 7px; border-radius: 50%; background: #ff6b7a; }
+.server-health.ok { background: #2dd4a8; box-shadow: 0 0 10px rgba(45,212,168,.45); }
+.terminal-center { display: grid; grid-template-rows: 52px 1fr; min-width: 0; min-height: 0; }
+.terminal-toolbar { height: 52px; background: #0d1421; }
+.terminal-title { display: flex; align-items: center; gap: 9px; }
+.terminal-title small { color: #63738d; }
+.terminal-status { width: 7px; height: 7px; border-radius: 50%; background: #63738d; }
+.terminal-status.connected { background: #2dd4a8; }
+.terminal-status.connecting { background: #f6c85f; }
+.terminal-session-label { color: #4d5e78; font-size: 10px; }
+.xterm-container { min-width: 0; min-height: 0; padding: 13px 8px 8px 14px; overflow: hidden; }
+.xterm-container .xterm { height: 100%; }
+.terminal-empty { padding: 28px 16px; color: #63738d; text-align: center; font-size: 12px; }
+.terminal-empty.large { display: grid; place-content: center; height: 100%; }
+.file-actions { display: flex; gap: 7px; padding: 10px 12px; border-bottom: 1px solid #1d293d; }
+.path-bar {
+  display: block; width: 100%; padding: 10px 13px; overflow: hidden; color: #8eaeff;
+  border: 0; border-bottom: 1px solid #1d293d; background: transparent;
+  font-size: 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+}
+.file-list { padding: 7px; }
+.file-row {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; gap: 8px;
+  align-items: center; min-height: 35px; padding: 4px 6px; border-radius: 6px; text-align: left;
+}
+.file-row:hover { background: #172238; }
+.file-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-row > small { color: #63738d; font-size: 9px; }
+.file-row-actions { visibility: hidden; }
+.file-row:hover .file-row-actions { visibility: visible; }
+.task-target-card {
+  margin-bottom: 12px; padding: 16px; border: 1px solid #24324a;
+  border-radius: 8px; background: #111a2c;
+}
+.task-target-card > div { display: flex; justify-content: space-between; }
+.task-target-card p { color: #93a4bd; font-size: 11px; }
+.ant-timeline pre {
+  margin: 4px 0 0; padding: 8px; overflow: auto; color: #d8e2f2;
+  background: #070b12; border-radius: 5px; white-space: pre-wrap;
+}
+
 @media (max-width: 1050px) {
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .login-page { grid-template-columns: 1fr; }
   .login-brand { display: none; }
+  .terminal-page { grid-template-columns: 210px minmax(400px, 1fr); }
+  .file-manager { display: none; }
 }
 @media (max-width: 760px) {
   .app-sider { display: none; }

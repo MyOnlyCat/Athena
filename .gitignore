@@ -12,5 +12,8 @@ api/.venv/
 api/data/
 ui/node_modules/
 ui/dist/
+*.tsbuildinfo
+ui/vite.config.js
+ui/vite.config.d.ts
 coverage/
 .worktrees/

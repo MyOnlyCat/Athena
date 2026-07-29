@@ -2,7 +2,10 @@ import axios, { AxiosError } from "axios";
 
 import type {
   ApiErrorBody,
+  AuditLog,
+  DeploymentEvent,
   DeploymentTask,
+  FileEntry,
   Host,
   HostInput,
   User
@@ -63,5 +66,38 @@ export const usersApi = {
 
 export const tasksApi = {
   list: async () => (await api.get<DeploymentTask[]>("/tasks")).data,
-  get: async (id: string) => (await api.get<DeploymentTask>(`/tasks/${id}`)).data
+  get: async (id: string) => (await api.get<DeploymentTask>(`/tasks/${id}`)).data,
+  events: async (id: string) =>
+    (await api.get<DeploymentEvent[]>(`/tasks/${id}/events`)).data
+};
+
+export const terminalApi = {
+  ticket: async (hostId: string) =>
+    (await api.post<{ ticket: string; expires_at: string }>("/terminal/tickets", {
+      host_id: hostId
+    })).data
+};
+
+export const filesApi = {
+  list: async (hostId: string, path: string) =>
+    (await api.get<{ path: string; entries: FileEntry[] }>(`/files/${hostId}/list`, {
+      params: { path }
+    })).data,
+  mkdir: async (hostId: string, path: string) =>
+    api.post(`/files/${hostId}/directories`, { path }),
+  rename: async (hostId: string, source: string, destination: string) =>
+    api.patch(`/files/${hostId}/rename`, { source, destination }),
+  remove: async (hostId: string, path: string, recursive: boolean) =>
+    api.delete(`/files/${hostId}`, { data: { path, recursive } }),
+  upload: async (hostId: string, path: string, file: File) =>
+    api.post(`/files/${hostId}/upload`, file, {
+      params: { path },
+      headers: { "Content-Type": "application/octet-stream" }
+    }),
+  download: async (hostId: string, path: string) =>
+    api.get(`/files/${hostId}/download`, { params: { path }, responseType: "blob" })
+};
+
+export const auditApi = {
+  list: async () => (await api.get<AuditLog[]>("/audit-logs")).data
 };

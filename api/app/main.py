@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
+from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.files import router as files_router
 from app.api.v1.hosts import router as hosts_router
@@ -18,6 +19,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import Base, create_engine, create_session_factory
 from app.core.errors import AppError, app_error_handler, http_error_handler
 from app.core.logging import configure_logging
+from app.models.audit import AuditLog
 from app.schemas.user import UserCreate
 from app.services.artifacts import ArtifactService
 from app.services.auth import AuthService, LoginThrottle
@@ -113,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(HTTPException, http_error_handler)  # type: ignore[arg-type]
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(audit_router, prefix="/api/v1")
     app.include_router(files_router, prefix="/api/v1")
     app.include_router(hosts_router, prefix="/api/v1")
     app.include_router(terminal_router, prefix="/api/v1")
@@ -128,6 +131,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers["X-Request-Id"] = request_id
+        return response
+
+    @app.middleware("http")
+    async def audit_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        response = await call_next(request)
+        user_id = getattr(request.state, "user_id", None)
+        if user_id and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            async with request.app.state.session_factory() as session:
+                session.add(
+                    AuditLog(
+                        user_id=user_id,
+                        action=f"{request.method} {request.url.path}",
+                        resource_type="http",
+                        result="success" if response.status_code < 400 else "failure",
+                        source_ip=request.client.host if request.client else None,
+                        details={
+                            "status_code": response.status_code,
+                            "request_id": request.state.request_id,
+                        },
+                    )
+                )
+                await session.commit()
         return response
 
     @app.get("/api/v1/health")

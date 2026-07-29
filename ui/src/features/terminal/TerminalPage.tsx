@@ -1,0 +1,44 @@
+import { useQuery } from "@tanstack/react-query";
+import { App } from "antd";
+import { useEffect, useMemo, useState } from "react";
+
+import { hostsApi } from "../../shared/api/client";
+import { FileManager } from "./FileManager";
+import { ServerSwitcher } from "./ServerSwitcher";
+import { TerminalPane } from "./TerminalPane";
+
+export function TerminalPage() {
+  const { modal } = App.useApp();
+  const query = useQuery({ queryKey: ["hosts"], queryFn: hostsApi.list });
+  const trusted = useMemo(
+    () => (query.data ?? []).filter((host) => host.host_key_fingerprint),
+    [query.data]
+  );
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeId && trusted.length) setActiveId(trusted[0].id);
+  }, [activeId, trusted]);
+
+  function select(hostId: string) {
+    if (!activeId || activeId === hostId) {
+      setActiveId(hostId);
+      return;
+    }
+    modal.confirm({
+      title: "切换服务器？",
+      content: "当前 SSH 会话将被关闭。",
+      okText: "切换",
+      onOk: () => setActiveId(hostId)
+    });
+  }
+
+  const active = trusted.find((host) => host.id === activeId);
+  return (
+    <div className="terminal-page">
+      <ServerSwitcher hosts={trusted} activeHostId={activeId} onSelect={select} />
+      <TerminalPane hostId={activeId} hostName={active?.name} />
+      {activeId ? <FileManager hostId={activeId} /> : <aside className="file-manager" />}
+    </div>
+  );
+}
