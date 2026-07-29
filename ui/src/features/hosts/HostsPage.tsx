@@ -69,14 +69,21 @@ export function HostsPage() {
   async function testHost(host: Host) {
     try {
       const result = await hostsApi.test(host.id);
+      const initialInvalidation = client.invalidateQueries({ queryKey: ["hosts"] });
       if (result.code === "SSH_HOST_KEY_UNTRUSTED" || result.code === "SSH_HOST_KEY_CHANGED") {
+        const fingerprint = result.fingerprint;
+        if (!fingerprint) {
+          message.error("服务器未返回可验证的主机指纹");
+          await initialInvalidation;
+          return;
+        }
         modal.confirm({
           title: result.code === "SSH_HOST_KEY_CHANGED" ? "主机指纹发生变化" : "确认主机指纹",
-          content: <span className="mono">{result.fingerprint}</span>,
+          content: <span className="mono">{fingerprint}</span>,
           okText: "信任此指纹",
           onOk: async () => {
             try {
-              await hostsApi.trust(host.id, result.fingerprint!);
+              await hostsApi.trust(host.id, fingerprint);
               const verified = await hostsApi.test(host.id);
               showTestResult(verified);
             } catch (error) {
@@ -86,9 +93,10 @@ export function HostsPage() {
             }
           }
         });
+        await initialInvalidation;
       } else {
         showTestResult(result);
-        await client.invalidateQueries({ queryKey: ["hosts"] });
+        await initialInvalidation;
       }
     } catch (error) {
       message.error(apiMessage(error));

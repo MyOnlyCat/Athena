@@ -13,7 +13,7 @@ import { Avatar, Button, Layout, Menu, Space } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../features/auth/AuthContext";
-import { useTheme } from "../styles/ThemeProvider";
+import { useTheme } from "../styles/ThemeContext";
 
 const { Sider, Header, Content } = Layout;
 

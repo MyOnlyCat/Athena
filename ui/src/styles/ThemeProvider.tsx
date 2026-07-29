@@ -1,22 +1,14 @@
 import { ConfigProvider } from "antd";
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
   type PropsWithChildren
 } from "react";
 
+import { ThemeContext } from "./ThemeContext";
 import { createTheme, THEME_STORAGE_KEY, type ThemeMode } from "./theme";
-
-type ThemeContextValue = {
-  mode: ThemeMode;
-  toggleTheme(): void;
-};
-
-const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 function getInitialTheme(): ThemeMode {
   try {
@@ -57,12 +49,4 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       <ConfigProvider theme={createTheme(mode)}>{children}</ConfigProvider>
     </ThemeContext.Provider>
   );
-}
-
-export function useTheme(): ThemeContextValue {
-  const theme = useContext(ThemeContext);
-  if (!theme) {
-    throw new Error("useTheme must be used within a ThemeProvider");
-  }
-  return theme;
 }

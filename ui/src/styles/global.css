@@ -149,6 +149,7 @@ button, input { font: inherit; }
   height: calc(100vh - 132px);
   min-height: 600px;
   overflow: hidden;
+  color: #dbe6f6;
   border: 1px solid #24324a;
   border-radius: 12px;
   background: #070b12;
