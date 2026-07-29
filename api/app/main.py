@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
@@ -18,6 +19,8 @@ from app.core.logging import configure_logging
 from app.schemas.user import UserCreate
 from app.services.auth import AuthService, LoginThrottle
 from app.services.files import AsyncRemoteFiles
+from app.services.inventory_sync import InventorySynchronizer
+from app.services.master_client import MasterClient
 from app.services.ssh import AsyncSSHClient
 from app.services.terminal import AsyncTerminalGateway, TerminalTicketStore
 
@@ -31,6 +34,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine = create_engine(active_settings)
         app.state.db_engine = engine
         app.state.session_factory = create_session_factory(engine)
+        master_client = None
+        if active_settings.master_node_url and active_settings.node_token:
+            master_client = MasterClient(
+                active_settings.master_node_url,
+                active_settings.node_id,
+                active_settings.node_token,
+            )
+        app.state.inventory_sync = InventorySynchronizer(
+            active_settings,
+            app.state.session_factory,
+            master_client,
+        )
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
         if active_settings.bootstrap_username and active_settings.bootstrap_password:
@@ -46,7 +61,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             password=active_settings.bootstrap_password,
                         )
                     )
+        stop = asyncio.Event()
+        worker = None
+        if master_client is not None and active_settings.environment != "test":
+            worker = asyncio.create_task(app.state.inventory_sync.run(stop))
         yield
+        stop.set()
+        app.state.inventory_sync.notify_change()
+        if worker is not None:
+            await worker
+        if master_client is not None:
+            await master_client.close()
         await engine.dispose()
 
     app = FastAPI(
@@ -60,6 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.terminal_tickets = TerminalTicketStore()
     app.state.terminal_gateway = AsyncTerminalGateway()
     app.state.remote_files = AsyncRemoteFiles()
+    app.state.inventory_sync = InventorySynchronizer(active_settings, None)
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(HTTPException, http_error_handler)  # type: ignore[arg-type]
     app.include_router(auth_router, prefix="/api/v1")

@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     bootstrap_username: str = ""
     bootstrap_password: str = ""
     max_upload_bytes: int = Field(default=1_073_741_824, ge=1)
+    node_id: str = "athena-node-local"
+    node_name: str = "Athena Node"
+    node_version: str = "0.1.0"
+    master_node_url: str = ""
+    node_token: str = ""
 
     @field_validator("credential_key")
     @classmethod

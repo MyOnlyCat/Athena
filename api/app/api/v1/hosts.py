@@ -35,7 +35,9 @@ async def create_host(
     session: SessionDep,
     _: CurrentUserDep,
 ) -> Host:
-    return await service(request, session).create(data)
+    host = await service(request, session).create(data)
+    request.app.state.inventory_sync.notify_change()
+    return host
 
 
 @router.get("/{host_id}", response_model=HostResponse)
@@ -56,7 +58,9 @@ async def update_host(
     session: SessionDep,
     _: CurrentUserDep,
 ) -> Host:
-    return await service(request, session).update(host_id, data)
+    host = await service(request, session).update(host_id, data)
+    request.app.state.inventory_sync.notify_change()
+    return host
 
 
 @router.delete("/{host_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -67,6 +71,7 @@ async def delete_host(
     _: CurrentUserDep,
 ) -> Response:
     await service(request, session).delete(host_id)
+    request.app.state.inventory_sync.notify_change()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -88,5 +93,6 @@ async def trust_fingerprint(
     session: SessionDep,
     _: CurrentUserDep,
 ) -> Host:
-    return await service(request, session).trust_fingerprint(host_id, data.fingerprint)
-
+    host = await service(request, session).trust_fingerprint(host_id, data.fingerprint)
+    request.app.state.inventory_sync.notify_change()
+    return host
