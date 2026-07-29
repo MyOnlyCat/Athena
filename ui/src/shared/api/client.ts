@@ -9,6 +9,7 @@ import type {
   Host,
   HostInput,
   SSHTestResult,
+  UploadOptions,
   User
 } from "./types";
 
@@ -104,10 +105,12 @@ export const filesApi = {
     api.patch(`/files/${hostId}/rename`, { source, destination }),
   remove: async (hostId: string, path: string, recursive: boolean) =>
     api.delete(`/files/${hostId}`, { data: { path, recursive } }),
-  upload: async (hostId: string, path: string, file: File) =>
+  upload: async (hostId: string, path: string, file: File, options: UploadOptions) =>
     api.post(`/files/${hostId}/upload`, file, {
       params: { path },
-      headers: { "Content-Type": "application/octet-stream" }
+      headers: { "Content-Type": "application/octet-stream" },
+      signal: options.signal,
+      onUploadProgress: options.onProgress
     }),
   download: async (hostId: string, path: string) => {
     const response = await api.get<Blob>(`/files/${hostId}/download`, {

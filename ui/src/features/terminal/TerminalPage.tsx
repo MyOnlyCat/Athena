@@ -49,7 +49,11 @@ function TerminalContent() {
     <div className="terminal-page">
       <ServerSwitcher hosts={trusted} activeHostId={activeId} onSelect={select} />
       <TerminalPane hostId={activeId} hostName={active?.name} />
-      {activeId ? <FileManager hostId={activeId} /> : <aside className="file-manager" />}
+      {activeId ? (
+        <FileManager key={activeId} hostId={activeId} />
+      ) : (
+        <aside className="file-manager" />
+      )}
     </div>
   );
 }

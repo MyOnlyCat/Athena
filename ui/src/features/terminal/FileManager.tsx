@@ -13,6 +13,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { apiMessage, filesApi } from "../../shared/api/client";
 import type { FileEntry } from "../../shared/api/types";
+import { UploadTasks } from "./UploadTasks";
+import { useUploadQueue } from "./useUploadQueue";
 
 export function FileManager({ hostId }: { hostId: string }) {
   const { message, modal } = App.useApp();
@@ -41,6 +43,10 @@ export function FileManager({ hostId }: { hostId: string }) {
       if (requestId === listRequestIdRef.current) setLoading(false);
     }
   }
+
+  const uploadQueue = useUploadQueue(hostId, () => {
+    void load();
+  });
 
   useEffect(() => {
     void load("/");
@@ -106,16 +112,6 @@ export function FileManager({ hostId }: { hostId: string }) {
     });
   }
 
-  async function upload(file: File) {
-    try {
-      await filesApi.upload(hostId, `${path.replace(/\/$/, "")}/${file.name}`, file);
-      message.success("文件上传完成");
-      await load();
-    } catch (error) {
-      message.error(apiMessage(error));
-    }
-  }
-
   return (
     <aside className="file-manager">
       <div className="terminal-pane-heading">
@@ -140,13 +136,22 @@ export function FileManager({ hostId }: { hostId: string }) {
         </Button>
         <input
           hidden
+          multiple
           ref={uploadRef}
           type="file"
-          onChange={(event) =>
-            event.target.files?.[0] && void upload(event.target.files[0])
-          }
+          onChange={(event) => {
+            const selected = Array.from(event.currentTarget.files ?? []);
+            if (selected.length) uploadQueue.enqueue(selected, path);
+            event.currentTarget.value = "";
+          }}
         />
       </div>
+      <UploadTasks
+        tasks={uploadQueue.tasks}
+        summary={uploadQueue.summary}
+        onCancel={uploadQueue.cancel}
+        onCancelAll={uploadQueue.cancelAll}
+      />
       <Input
         aria-label="Remote path"
         className="path-bar mono"

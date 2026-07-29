@@ -81,6 +81,40 @@ export interface FileEntry {
   permissions: string;
 }
 
+export type UploadTaskStatus =
+  | "queued"
+  | "uploading"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface UploadTask {
+  id: string;
+  file: File;
+  destination: string;
+  loaded: number;
+  total: number;
+  status: UploadTaskStatus;
+  error?: string;
+}
+
+export interface UploadSummary {
+  total: number;
+  queued: number;
+  uploading: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  loaded: number;
+  totalBytes: number;
+  percent: number;
+}
+
+export interface UploadOptions {
+  signal: AbortSignal;
+  onProgress: (event: { loaded: number; total?: number }) => void;
+}
+
 export interface DeploymentEvent {
   id: number;
   sequence: number;
