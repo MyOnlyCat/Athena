@@ -1,3 +1,5 @@
+from app.services.files import AsyncRemoteFiles
+from app.services.ssh import HostConnection
 from tests.test_terminal import auth_headers, create_trusted_host
 
 
@@ -36,7 +38,55 @@ class FakeRemoteFiles:
         self.uploads.append((path, content))
 
     async def download(self, connection, path):
-        yield b"artifact-content"
+        yield b"artifact-"
+        yield b"content"
+
+
+class FakeRemoteFile:
+    def __init__(self) -> None:
+        self.chunks = iter([b"artifact-", b"content", b""])
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def read(self, size):
+        return next(self.chunks)
+
+
+class FakeSFTP:
+    def __init__(self) -> None:
+        self.exited = False
+        self.remote = FakeRemoteFile()
+
+    def open(self, path, mode):
+        return self.remote
+
+    def exit(self):
+        self.exited = True
+
+
+class FakeSSH:
+    def __init__(self) -> None:
+        self.closed = False
+        self.waited_for_close = False
+
+    def close(self):
+        self.closed = True
+
+    async def wait_closed(self):
+        self.waited_for_close = True
+
+
+class DownloadRemoteFiles(AsyncRemoteFiles):
+    def __init__(self, ssh, sftp) -> None:
+        self.ssh = ssh
+        self.sftp = sftp
+
+    async def _connect(self, connection):
+        return self.ssh, self.sftp
 
 
 def test_remote_files_can_be_listed_and_mutated(client):
@@ -93,11 +143,29 @@ def test_remote_file_can_be_uploaded_and_downloaded(client):
     downloaded = client.get(
         f"/api/v1/files/{host['id']}/download",
         headers=headers,
-        params={"path": "/opt/release/app.jar"},
+        params={"path": '/opt/release/\u6d4b\u8bd5"unsafe\r\n.txt'},
     )
     assert downloaded.status_code == 200
     assert downloaded.content == b"artifact-content"
-    assert downloaded.headers["content-disposition"] == 'attachment; filename="app.jar"'
+    content_disposition = downloaded.headers["content-disposition"]
+    assert 'filename="unsafe.txt"; filename*=' in content_disposition
+    assert "filename*=UTF-8''%E6%B5%8B%E8%AF%95%22unsafe%0D%0A.txt" in content_disposition
+    assert "\r" not in content_disposition
+    assert "\n" not in content_disposition
+
+
+async def test_download_streaming_closes_the_sftp_connection_after_consumption():
+    ssh = FakeSSH()
+    sftp = FakeSFTP()
+    remote_files = DownloadRemoteFiles(ssh, sftp)
+    connection = HostConnection("127.0.0.1", 22, "deploy", "secret")
+
+    chunks = [chunk async for chunk in remote_files.download(connection, "/opt/release/app.jar")]
+
+    assert b"".join(chunks) == b"artifact-content"
+    assert sftp.exited
+    assert ssh.closed
+    assert ssh.waited_for_close
 
 
 def test_file_path_rejects_null_bytes(client):

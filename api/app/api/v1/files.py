@@ -1,5 +1,6 @@
 import posixpath
 from collections.abc import AsyncIterator
+from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request, Response, status
 from starlette.responses import StreamingResponse
@@ -118,9 +119,16 @@ async def download_file(
 ) -> StreamingResponse:
     path = validate_remote_path(path)
     connection = await connection_for(request, session, host_id)
-    filename = posixpath.basename(path).replace('"', "")
+    filename = posixpath.basename(path)
+    fallback_filename = filename.encode("ascii", "ignore").decode("ascii")
+    fallback_filename = fallback_filename.replace("\\", "_").replace('"', "")
+    fallback_filename = fallback_filename.replace("\r", "").replace("\n", "") or "download"
+    content_disposition = (
+        f'attachment; filename="{fallback_filename}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
     return StreamingResponse(
         request.app.state.remote_files.download(connection, path),
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition},
     )

@@ -17,6 +17,7 @@ import type { FileEntry } from "../../shared/api/types";
 export function FileManager({ hostId }: { hostId: string }) {
   const { message, modal } = App.useApp();
   const [path, setPath] = useState("/");
+  const [pathDraft, setPathDraft] = useState("/");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -27,8 +28,10 @@ export function FileManager({ hostId }: { hostId: string }) {
     try {
       const result = await filesApi.list(hostId, nextPath);
       setPath(result.path);
+      setPathDraft(result.path);
       setEntries(result.entries);
     } catch (error) {
+      setPathDraft(path);
       message.error(apiMessage(error));
     } finally {
       setLoading(false);
@@ -53,13 +56,19 @@ export function FileManager({ hostId }: { hostId: string }) {
   }
 
   async function download(entry: FileEntry) {
-    const response = await filesApi.download(hostId, entry.path);
-    const url = URL.createObjectURL(response.data);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = entry.name;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    try {
+      const { blob, filename } = await filesApi.download(hostId, entry.path);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (error) {
+      message.error(apiMessage(error));
+    }
   }
 
   function rename(entry: FileEntry) {
@@ -134,13 +143,13 @@ export function FileManager({ hostId }: { hostId: string }) {
           }
         />
       </div>
-      <button
-        type="button"
+      <Input
+        aria-label="Remote path"
         className="path-bar mono"
-        onClick={() => path !== "/" && void load("/")}
-      >
-        {path}
-      </button>
+        value={pathDraft}
+        onChange={(event) => setPathDraft(event.target.value)}
+        onPressEnter={() => void load(pathDraft)}
+      />
       <Spin spinning={loading}>
         <div className="file-list">
           {path !== "/" && (

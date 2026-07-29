@@ -79,6 +79,20 @@ export const terminalApi = {
     })).data
 };
 
+function downloadFilename(contentDisposition: string | undefined, path: string): string {
+  const encoded = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      // Fall back to the regular filename parameter when the header is malformed.
+    }
+  }
+
+  const fallback = contentDisposition?.match(/filename="([^"]*)"|filename=([^;\s]+)/i);
+  return fallback?.[1] ?? fallback?.[2] ?? path.split("/").pop() ?? "download";
+}
+
 export const filesApi = {
   list: async (hostId: string, path: string) =>
     (await api.get<{ path: string; entries: FileEntry[] }>(`/files/${hostId}/list`, {
@@ -95,8 +109,20 @@ export const filesApi = {
       params: { path },
       headers: { "Content-Type": "application/octet-stream" }
     }),
-  download: async (hostId: string, path: string) =>
-    api.get(`/files/${hostId}/download`, { params: { path }, responseType: "blob" })
+  download: async (hostId: string, path: string) => {
+    const response = await api.get<Blob>(`/files/${hostId}/download`, {
+      params: { path },
+      responseType: "blob"
+    });
+    const contentDisposition = response.headers["content-disposition"];
+    return {
+      blob: response.data,
+      filename: downloadFilename(
+        typeof contentDisposition === "string" ? contentDisposition : undefined,
+        path
+      )
+    };
+  }
 };
 
 export const auditApi = {
