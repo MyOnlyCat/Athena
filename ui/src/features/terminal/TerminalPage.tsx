@@ -1,13 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
-import { App } from "antd";
+import { App, ConfigProvider } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
 import { hostsApi } from "../../shared/api/client";
+import { createTheme } from "../../styles/theme";
 import { FileManager } from "./FileManager";
 import { ServerSwitcher } from "./ServerSwitcher";
 import { TerminalPane } from "./TerminalPane";
 
 export function TerminalPage() {
+  return (
+    <ConfigProvider theme={createTheme("dark")}>
+      <App component={false}>
+        <TerminalContent />
+      </App>
+    </ConfigProvider>
+  );
+}
+
+function TerminalContent() {
   const { modal } = App.useApp();
   const query = useQuery({ queryKey: ["hosts"], queryFn: hostsApi.list });
   const trusted = useMemo(
