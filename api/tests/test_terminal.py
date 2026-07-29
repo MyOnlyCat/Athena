@@ -87,6 +87,7 @@ def test_untrusted_host_cannot_issue_terminal_ticket(client):
 class FakeStdin:
     def __init__(self) -> None:
         self.writes: list[bytes] = []
+        self.eof_calls = 0
 
     def write(self, data: bytes) -> None:
         if not isinstance(data, bytes):
@@ -94,34 +95,61 @@ class FakeStdin:
         self.writes.append(data)
 
     def write_eof(self) -> None:
-        pass
+        self.eof_calls += 1
+
+
+class BlockingStdout:
+    async def read(self, _: int) -> bytes:
+        await asyncio.Event().wait()
+        return b""
 
 
 class FakeProcess:
     def __init__(self) -> None:
         self.stdin = FakeStdin()
+        self.stdout = BlockingStdout()
 
 
 class FakeConnection:
+    def __init__(self) -> None:
+        self.close_calls = 0
+
     def close(self) -> None:
-        pass
+        self.close_calls += 1
 
     async def wait_closed(self) -> None:
         pass
 
 
-def test_binary_terminal_writes_browser_input_as_bytes():
-    process = FakeProcess()
-    terminal = AsyncTerminal(FakeConnection(), process)
+class InputWebSocket:
+    def __init__(self) -> None:
+        self.messages = [{"type": "input", "data": b64encode(b"ls\r").decode()}]
 
-    terminal.write(b"ls\r")
+    async def send_json(self, message: dict[str, str]) -> None:
+        pass
+
+    async def receive_json(self) -> dict[str, str]:
+        if self.messages:
+            return self.messages.pop()
+        raise WebSocketDisconnect()
+
+
+@pytest.mark.asyncio
+async def test_binary_terminal_bridge_writes_browser_input_as_bytes():
+    process = FakeProcess()
+    connection = FakeConnection()
+    terminal = AsyncTerminal(connection, process)
+
+    await bridge_terminal(InputWebSocket(), terminal)
 
     assert process.stdin.writes == [b"ls\r"]
+    assert process.stdin.eof_calls == 1
+    assert connection.close_calls == 1
 
 
 class FailingTerminal:
     def __init__(self) -> None:
-        self.closed = False
+        self.close_calls = 0
 
     async def read(self) -> bytes:
         raise RuntimeError("remote channel failed")
@@ -133,7 +161,7 @@ class FailingTerminal:
         pass
 
     async def close(self) -> None:
-        self.closed = True
+        self.close_calls += 1
 
 
 class WaitingWebSocket:
@@ -158,7 +186,24 @@ async def test_terminal_bridge_reports_remote_failure_and_closes_terminal():
     assert websocket.sent == [
         {"type": "error", "code": "TERMINAL_BRIDGE_ERROR"}
     ]
-    assert terminal.closed is True
+    assert terminal.close_calls == 1
+
+
+class ErroringErrorWebSocket(WaitingWebSocket):
+    async def send_json(self, message: dict[str, str]) -> None:
+        if message["type"] == "error":
+            raise RuntimeError("websocket send failed")
+        await super().send_json(message)
+
+
+@pytest.mark.asyncio
+async def test_terminal_bridge_closes_when_error_frame_cannot_be_sent():
+    websocket = ErroringErrorWebSocket()
+    terminal = FailingTerminal()
+
+    await bridge_terminal(websocket, terminal)
+
+    assert terminal.close_calls == 1
 
 
 class RaceTerminal(FailingTerminal):
@@ -191,4 +236,4 @@ async def test_terminal_bridge_prioritizes_non_disconnect_failure():
     assert websocket.sent == [
         {"type": "error", "code": "TERMINAL_BRIDGE_ERROR"}
     ]
-    assert terminal.closed is True
+    assert terminal.close_calls == 1

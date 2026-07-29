@@ -133,7 +133,7 @@ async def bridge_terminal(websocket: WebSocket, terminal: AsyncTerminal) -> None
     except Exception:
         try:
             await websocket.send_json({"type": "error", "code": "TERMINAL_BRIDGE_ERROR"})
-        except WebSocketDisconnect:
+        except Exception:
             pass
     finally:
         for task in tasks:
