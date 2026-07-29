@@ -75,10 +75,15 @@ export function HostsPage() {
           content: <span className="mono">{result.fingerprint}</span>,
           okText: "信任此指纹",
           onOk: async () => {
-            await hostsApi.trust(host.id, result.fingerprint!);
-            const verified = await hostsApi.test(host.id);
-            showTestResult(verified);
-            await client.invalidateQueries({ queryKey: ["hosts"] });
+            try {
+              await hostsApi.trust(host.id, result.fingerprint!);
+              const verified = await hostsApi.test(host.id);
+              showTestResult(verified);
+            } catch (error) {
+              message.error(apiMessage(error));
+            } finally {
+              await client.invalidateQueries({ queryKey: ["hosts"] });
+            }
           }
         });
       } else {

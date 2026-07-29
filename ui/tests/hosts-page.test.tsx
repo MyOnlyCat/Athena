@@ -107,3 +107,25 @@ test("shows the final SSH failure after trusting an untrusted fingerprint", asyn
   );
   expect(await screen.findByText("认证失败")).toBeInTheDocument();
 });
+
+test("shows the trust error without retesting when fingerprint trust fails", async () => {
+  vi.spyOn(hostsApi, "list").mockReset().mockResolvedValue([host]);
+  vi.spyOn(hostsApi, "test")
+    .mockReset()
+    .mockResolvedValueOnce({
+      status: "pending_trust",
+      code: "SSH_HOST_KEY_UNTRUSTED",
+      message: "请确认主机指纹",
+      fingerprint: "SHA256:first"
+    });
+  vi.spyOn(hostsApi, "trust").mockReset().mockRejectedValue(new Error("信任请求失败"));
+  const user = userEvent.setup();
+
+  renderPage();
+
+  await user.click(await findTestConnectionButton());
+  await user.click(await screen.findByRole("button", { name: "信任此指纹" }));
+
+  expect(await screen.findByText("信任请求失败")).toBeInTheDocument();
+  expect(hostsApi.test).toHaveBeenCalledTimes(1);
+});
