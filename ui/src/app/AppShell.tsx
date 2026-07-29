@@ -10,6 +10,7 @@ import {
   TeamOutlined
 } from "@ant-design/icons";
 import { Avatar, Button, Layout, Menu, Space } from "antd";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../features/auth/AuthContext";
@@ -22,8 +23,21 @@ export function AppShell() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { mode, toggleTheme } = useTheme();
+  const isTerminalRoute = location.pathname === "/terminal";
+  const [terminalFullscreen, setTerminalFullscreen] = useState(isTerminalRoute);
+  const previousPathname = useRef(location.pathname);
+
+  useLayoutEffect(() => {
+    if (isTerminalRoute && previousPathname.current !== "/terminal") {
+      setTerminalFullscreen(true);
+    }
+    previousPathname.current = location.pathname;
+  }, [isTerminalRoute, location.pathname]);
+
+  const isTerminalFullscreen = isTerminalRoute && terminalFullscreen;
+
   return (
-    <Layout className="app-layout">
+    <Layout className={`app-layout${isTerminalFullscreen ? " terminal-fullscreen" : ""}`}>
       <Sider width={224} className="app-sider">
         <div className="brand">
           <div className="brand-mark">A</div>
@@ -77,7 +91,12 @@ export function AppShell() {
           </Space>
         </Header>
         <Content className="app-content">
-          <Outlet />
+          <Outlet
+            context={{
+              terminalFullscreen: isTerminalFullscreen,
+              toggleTerminalFullscreen: () => setTerminalFullscreen((fullscreen) => !fullscreen)
+            }}
+          />
         </Content>
       </Layout>
     </Layout>

@@ -1,11 +1,18 @@
+import { FullscreenExitOutlined, FullscreenOutlined } from "@ant-design/icons";
+import { Button } from "antd";
+
 import { useTerminalSession } from "./useTerminalSession";
 
 export function TerminalPane({
   hostId,
-  hostName
+  hostName,
+  fullscreen,
+  onToggleFullscreen
 }: {
   hostId: string | null;
   hostName?: string;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
 }) {
   const { containerRef, state } = useTerminalSession(hostId);
   return (
@@ -16,7 +23,15 @@ export function TerminalPane({
           <strong>{hostName ?? "请选择服务器"}</strong>
           <small>{state === "connected" ? "SSH 已连接" : state}</small>
         </div>
-        <span className="mono terminal-session-label">xterm-256color</span>
+        <div className="terminal-toolbar-actions">
+          <span className="mono terminal-session-label">xterm-256color</span>
+          <Button
+            type="text"
+            icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+            aria-label={fullscreen ? "退出全屏" : "进入全屏"}
+            onClick={onToggleFullscreen}
+          />
+        </div>
       </div>
       {hostId ? (
         <div className="xterm-container" ref={containerRef} />

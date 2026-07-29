@@ -106,6 +106,10 @@ button, input { font: inherit; }
 .user-summary strong { color: var(--text); }
 .user-summary span { color: var(--text-muted); font-size: 11px; }
 .app-content { padding: 34px; }
+.terminal-fullscreen .app-sider,
+.terminal-fullscreen .app-header { display: none; }
+.terminal-fullscreen .app-sider + .ant-layout { margin-left: 0; }
+.terminal-fullscreen .app-content { padding: 0; }
 .page-stack { display: grid; gap: 24px; max-width: 1500px; margin: auto; }
 .page-header { display: flex; justify-content: space-between; align-items: end; }
 .page-header h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: -.02em; }
@@ -155,6 +159,13 @@ button, input { font: inherit; }
   background: #070b12;
   box-shadow: 0 24px 60px rgba(0, 0, 0, .25);
 }
+.terminal-fullscreen .terminal-page {
+  height: 100vh;
+  min-height: 100vh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
 .server-switcher, .file-manager { min-width: 0; background: #101827; }
 .server-switcher { border-right: 1px solid #24324a; }
 .file-manager { border-left: 1px solid #24324a; }
@@ -190,6 +201,7 @@ button, input { font: inherit; }
 .terminal-status.connected { background: #2dd4a8; }
 .terminal-status.connecting { background: #f6c85f; }
 .terminal-session-label { color: #4d5e78; font-size: 10px; }
+.terminal-toolbar-actions { display: flex; align-items: center; gap: 8px; }
 .xterm-container { min-width: 0; min-height: 0; padding: 13px 8px 8px 14px; overflow: hidden; background: #070b12; }
 .xterm-container .xterm { height: 100%; }
 .terminal-empty { padding: 28px 16px; color: #63738d; text-align: center; font-size: 12px; }
