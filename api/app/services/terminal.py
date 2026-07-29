@@ -65,7 +65,7 @@ class AsyncTerminal:
         return data.encode() if isinstance(data, str) else data
 
     def write(self, data: bytes) -> None:
-        self.process.stdin.write(data.decode(errors="replace"))
+        self.process.stdin.write(data)
 
     def resize(self, cols: int, rows: int) -> None:
         self.process.change_terminal_size(cols, rows)
@@ -119,16 +119,25 @@ async def bridge_terminal(websocket: WebSocket, terminal: AsyncTerminal) -> None
         asyncio.create_task(browser_to_remote()),
     ]
     try:
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
-        for task in done:
-            task.result()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, (asyncio.CancelledError, WebSocketDisconnect)):
+                continue
+            if isinstance(result, BaseException):
+                raise result
     except WebSocketDisconnect:
         pass
+    except Exception:
+        try:
+            await websocket.send_json({"type": "error", "code": "TERMINAL_BRIDGE_ERROR"})
+        except WebSocketDisconnect:
+            pass
     finally:
         for task in tasks:
             if not task.done():
                 task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await terminal.close()
-
