@@ -8,7 +8,7 @@ import {
   ReloadOutlined,
   UploadOutlined
 } from "@ant-design/icons";
-import { App, Button, Input, Modal, Space, Spin, Tooltip } from "antd";
+import { App, Button, Input, Space, Spin, Tooltip } from "antd";
 import { useEffect, useRef, useState } from "react";
 
 import { apiMessage, filesApi } from "../../shared/api/client";
@@ -81,7 +81,7 @@ export function FileManager({ hostId }: { hostId: string }) {
   }
 
   function remove(entry: FileEntry) {
-    Modal.confirm({
+    modal.confirm({
       title: `删除 ${entry.name}？`,
       content:
         entry.type === "directory" ? "目录及其中内容将被递归删除。" : "此操作无法撤销。",
