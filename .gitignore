@@ -7,10 +7,10 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+*.egg-info/
 api/.venv/
 api/data/
 ui/node_modules/
 ui/dist/
 coverage/
 .worktrees/
-

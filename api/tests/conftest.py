@@ -14,6 +14,8 @@ def settings(tmp_path) -> Settings:
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
         jwt_secret="test-jwt-secret-that-is-long-enough",
         credential_key="4UlSOndzr4KYLmDMK5T5OmRsWLOtqzmNe01_sucGm2o=",
+        bootstrap_username="admin",
+        bootstrap_password="AdminPassw0rd!",
     )
 
 

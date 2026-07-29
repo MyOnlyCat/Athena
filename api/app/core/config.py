@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     credential_key: str = ""
     service_name: str = "athena-node-api"
     sqlite_busy_timeout_ms: int = Field(default=5_000, ge=0)
+    access_token_minutes: int = Field(default=30, ge=1)
+    bootstrap_username: str = ""
+    bootstrap_password: str = ""
 
     @field_validator("credential_key")
     @classmethod
@@ -31,4 +34,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

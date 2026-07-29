@@ -1,7 +1,0 @@
-pyproject.toml
-athena_node_api.egg-info/PKG-INFO
-athena_node_api.egg-info/SOURCES.txt
-athena_node_api.egg-info/dependency_links.txt
-athena_node_api.egg-info/requires.txt
-athena_node_api.egg-info/top_level.txt
-tests/test_health.py
