@@ -5,6 +5,7 @@ from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -768,6 +769,211 @@ def runtime_with_fakes(
     return MasterRuntime(
         **runtime_kwargs,
     )
+
+
+async def route_runtime_with_old_settings(
+    settings: Settings,
+    tracker: RuntimeTracker,
+) -> tuple[Any, Any, Any, Any, Any]:
+    from app.core.database import Base, create_engine, create_session_factory
+    from app.schemas.master_setting import MasterSettingInput
+    from app.services.master_runtime import MasterRuntime
+    from app.services.master_settings import MasterConfig, MasterSettingsService
+
+    engine = create_engine(settings)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    session_factory = create_session_factory(engine)
+    runtime: MasterRuntime = runtime_with_fakes(settings, tracker)
+    old_config = MasterConfig("https", "old.example.com", 443, "old")
+    await runtime.apply(old_config)
+    await asyncio.sleep(0)
+    async with session_factory() as session:
+        await MasterSettingsService(
+            session,
+            settings,
+            CredentialCipher(settings.credential_key),
+        ).save(
+            MasterSettingInput(
+                scheme=old_config.scheme,
+                host=old_config.host,
+                port=old_config.port,
+                token=old_config.token,
+            ),
+            old_config,
+        )
+        await session.commit()
+
+    async def skip_connection_test(config: MasterConfig) -> None:
+        del config
+
+    runtime.test = skip_connection_test  # type: ignore[method-assign]
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                master_runtime=runtime,
+                settings=settings,
+            )
+        )
+    )
+    return engine, session_factory, runtime, request, old_config
+
+
+class CommitAndRollbackFailingSession:
+    def __init__(self, session: Any, rollback_error: BaseException) -> None:
+        self.session = session
+        self.rollback_error = rollback_error
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.session, name)
+
+    async def commit(self) -> None:
+        raise RuntimeError("settings commit failed")
+
+    async def rollback(self) -> None:
+        raise self.rollback_error
+
+
+@pytest.mark.asyncio
+async def test_put_activates_committed_candidate_when_old_closers_fail(
+    settings: Settings,
+) -> None:
+    from app.api.v1.master_settings import update_master_settings
+    from app.schemas.master_setting import MasterSettingInput
+    from app.services.master_settings import MasterSettingsService
+
+    tracker = RuntimeTracker()
+    engine, session_factory, runtime, request, _ = (
+        await route_runtime_with_old_settings(settings, tracker)
+    )
+    tracker.fail_worker_count = 1
+    tracker.fail_executor_close_count = 1
+    tracker.fail_client_close_count = 1
+    new_data = MasterSettingInput(
+        scheme="http",
+        host="new.example.com",
+        port=8080,
+        token="new",
+    )
+
+    try:
+        async with session_factory() as session:
+            result = await update_master_settings(
+                new_data,
+                request,
+                session,
+                None,  # type: ignore[arg-type]
+            )
+        await asyncio.sleep(0)
+        async with session_factory() as session:
+            saved = await MasterSettingsService(
+                session,
+                settings,
+                CredentialCipher(settings.credential_key),
+            ).get_effective()
+
+        assert result.host == "new.example.com"
+        assert saved.host == "new.example.com"
+        assert saved.token == "new"
+        assert tracker.events.count("worker-stop:old") == 1
+        assert tracker.events.count("worker-start:new") == 1
+        assert tracker.events.count("executor-close:old") == 1
+        assert tracker.events.count("client-close:old") == 1
+        assert tracker.active_workers == 1
+        assert tracker.maximum_workers == 1
+        assert runtime.status == "running"
+
+        await runtime.stop()
+
+        assert tracker.events.count("executor-close:old") == 2
+        assert tracker.events.count("client-close:old") == 2
+        assert tracker.events.count("executor-close:new") == 1
+        assert tracker.events.count("client-close:new") == 1
+    finally:
+        await runtime.stop()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rollback_error",
+    [
+        RuntimeError("settings rollback failed"),
+        asyncio.CancelledError("settings rollback cancelled"),
+    ],
+    ids=["rollback-error", "rollback-cancelled"],
+)
+async def test_failed_rollback_still_discards_prepared_candidate(
+    settings: Settings,
+    rollback_error: BaseException,
+) -> None:
+    from app.api.v1.master_settings import update_master_settings
+    from app.schemas.master_setting import MasterSettingInput
+    from app.services.master_settings import MasterConfig, MasterSettingsService
+
+    tracker = RuntimeTracker()
+    engine, session_factory, runtime, request, old_config = (
+        await route_runtime_with_old_settings(settings, tracker)
+    )
+    prepared: list[Any] = []
+    original_prepare = runtime.prepare
+
+    async def capture_candidate(config: MasterConfig) -> Any:
+        candidate = await original_prepare(config)
+        prepared.append(candidate)
+        return candidate
+
+    runtime.prepare = capture_candidate  # type: ignore[method-assign]
+    session = session_factory()
+    failure: BaseException | None = None
+    try:
+        try:
+            await update_master_settings(
+                MasterSettingInput(
+                    scheme="http",
+                    host="candidate.example.com",
+                    port=8080,
+                    token="candidate",
+                ),
+                request,
+                CommitAndRollbackFailingSession(session, rollback_error),
+                None,  # type: ignore[arg-type]
+            )
+        except BaseException as exc:
+            failure = exc
+        finally:
+            await session.close()
+
+        assert prepared
+        candidate = prepared[0]
+        assert not candidate.has_resources
+        assert candidate.worker is None
+        assert candidate.executor is None
+        assert candidate.client is None
+        assert tracker.events.count("executor-close:candidate") == 1
+        assert tracker.events.count("client-close:candidate") == 1
+        assert "worker-stop:old" not in tracker.events
+        assert tracker.active_workers == 1
+        assert runtime.status == "running"
+
+        async with session_factory() as query_session:
+            saved = await MasterSettingsService(
+                query_session,
+                settings,
+                CredentialCipher(settings.credential_key),
+            ).get_effective()
+        assert saved == old_config
+        assert isinstance(failure, RuntimeError)
+        assert str(failure) == "settings commit failed"
+        assert any(
+            "rollback failed" in note
+            for note in getattr(failure, "__notes__", ())
+        )
+    finally:
+        if prepared and prepared[0].has_resources:
+            await runtime.discard(prepared[0])
+        await runtime.stop()
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

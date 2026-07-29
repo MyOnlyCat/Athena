@@ -166,7 +166,9 @@ class MasterRuntime:
         previous = self._active
         self._active = None
         if previous is not None:
-            await self._retire(previous)
+            cleanup_errors = await self._drain_worker(previous)
+            cleanup_errors.extend(await self._close_resources(previous))
+            self._retain_retired(previous, cleanup_errors)
 
         if not candidate.has_resources:
             self._publish(None, None)
@@ -246,12 +248,14 @@ class MasterRuntime:
 
     async def _retire(self, slot: RuntimeSlot) -> None:
         cleanup_errors = await self._cleanup_slot(slot)
-        if slot.has_resources and slot not in self._retired:
-            self._retired.append(slot)
-        for error in cleanup_errors:
-            error.add_note("retired runtime cleanup will be retried during stop")
+        self._retain_retired(slot, cleanup_errors)
 
     async def _cleanup_slot(self, slot: RuntimeSlot) -> list[Exception]:
+        errors = await self._drain_worker(slot)
+        errors.extend(await self._close_resources(slot))
+        return errors
+
+    async def _drain_worker(self, slot: RuntimeSlot) -> list[Exception]:
         errors: list[Exception] = []
         if slot.stop_event is not None:
             slot.stop_event.set()
@@ -274,6 +278,10 @@ class MasterRuntime:
             slot.stop_event = None
             slot.activation_event = None
 
+        return errors
+
+    async def _close_resources(self, slot: RuntimeSlot) -> list[Exception]:
+        errors: list[Exception] = []
         if slot.executor is not None:
             try:
                 await slot.executor.close()
@@ -291,6 +299,16 @@ class MasterRuntime:
                 slot.client = None
 
         return errors
+
+    def _retain_retired(
+        self,
+        slot: RuntimeSlot,
+        cleanup_errors: list[Exception],
+    ) -> None:
+        if slot.has_resources and slot not in self._retired:
+            self._retired.append(slot)
+        for error in cleanup_errors:
+            error.add_note("retired runtime cleanup will be retried during stop")
 
     async def _shielded(
         self,

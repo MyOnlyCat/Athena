@@ -72,9 +72,16 @@ async def update_master_settings(
         try:
             await settings_service.save(data, config)
             await session.commit()
-        except BaseException:
-            await session.rollback()
-            await runtime.discard(candidate)
+        except BaseException as exc:
+            try:
+                await session.rollback()
+            except BaseException as rollback_error:
+                exc.add_note(f"settings rollback failed: {rollback_error!r}")
+            finally:
+                try:
+                    await runtime.discard(candidate)
+                except BaseException as discard_error:
+                    exc.add_note(f"candidate discard failed: {discard_error!r}")
             raise
         await runtime.activate(candidate)
         return response(config, runtime.status)
