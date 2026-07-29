@@ -8,6 +8,7 @@ import type {
   FileEntry,
   Host,
   HostInput,
+  SSHTestResult,
   User
 } from "./types";
 
@@ -49,7 +50,7 @@ export const hostsApi = {
   update: async (id: string, input: HostInput) =>
     (await api.put<Host>(`/hosts/${id}`, input)).data,
   remove: async (id: string) => api.delete(`/hosts/${id}`),
-  test: async (id: string) => (await api.post(`/hosts/${id}/test`)).data,
+  test: async (id: string) => (await api.post<SSHTestResult>(`/hosts/${id}/test`)).data,
   trust: async (id: string, fingerprint: string) =>
     (await api.post<Host>(`/hosts/${id}/trust-fingerprint`, { fingerprint })).data
 };

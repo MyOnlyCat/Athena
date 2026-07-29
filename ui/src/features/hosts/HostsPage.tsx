@@ -13,7 +13,7 @@ import {
 import { useState } from "react";
 
 import { apiMessage, hostsApi } from "../../shared/api/client";
-import type { Host, HostInput } from "../../shared/api/types";
+import type { Host, HostInput, SSHTestResult } from "../../shared/api/types";
 import { HostTable } from "./HostTable";
 
 export function HostsPage() {
@@ -62,6 +62,10 @@ export function HostsPage() {
     );
   }
 
+  function showTestResult(result: SSHTestResult) {
+    message[result.status === "success" ? "success" : "error"](result.message);
+  }
+
   async function testHost(host: Host) {
     try {
       const result = await hostsApi.test(host.id);
@@ -70,12 +74,17 @@ export function HostsPage() {
           title: result.code === "SSH_HOST_KEY_CHANGED" ? "主机指纹发生变化" : "确认主机指纹",
           content: <span className="mono">{result.fingerprint}</span>,
           okText: "信任此指纹",
-          onOk: () => hostsApi.trust(host.id, result.fingerprint)
+          onOk: async () => {
+            await hostsApi.trust(host.id, result.fingerprint!);
+            const verified = await hostsApi.test(host.id);
+            showTestResult(verified);
+            await client.invalidateQueries({ queryKey: ["hosts"] });
+          }
         });
       } else {
-        message[result.status === "success" ? "success" : "error"](result.message);
+        showTestResult(result);
+        await client.invalidateQueries({ queryKey: ["hosts"] });
       }
-      client.invalidateQueries({ queryKey: ["hosts"] });
     } catch (error) {
       message.error(apiMessage(error));
     }

@@ -32,6 +32,13 @@ export interface HostInput {
   is_local: boolean;
 }
 
+export interface SSHTestResult {
+  status: string;
+  code: string;
+  message: string;
+  fingerprint: string | null;
+}
+
 export interface DeploymentTarget {
   id: string;
   target_ip: string;
