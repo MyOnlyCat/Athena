@@ -1,6 +1,8 @@
 import asyncio
 import sqlite3
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -30,11 +32,45 @@ class FakeMasterRuntime:
         self.tested: list[Any] = []
         self.applied: list[Any] = []
         self.test_error: AppError | None = None
+        self.prepare_error: Exception | None = None
+        self.activate_error: Exception | None = None
+        self.test_delay = 0.0
+        self.reconfiguring = 0
+        self.maximum_reconfiguring = 0
+        self._reconfigure_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def reconfigure(self):
+        async with self._reconfigure_lock:
+            self.reconfiguring += 1
+            self.maximum_reconfiguring = max(
+                self.maximum_reconfiguring,
+                self.reconfiguring,
+            )
+            try:
+                yield
+            finally:
+                self.reconfiguring -= 1
 
     async def test(self, config: Any) -> None:
         self.tested.append(config)
+        if self.test_delay:
+            await asyncio.sleep(self.test_delay)
         if self.test_error is not None:
             raise self.test_error
+
+    async def prepare(self, config: Any) -> Any:
+        if self.prepare_error is not None:
+            raise self.prepare_error
+        return config
+
+    async def activate(self, candidate: Any) -> None:
+        if self.activate_error is not None:
+            raise self.activate_error
+        self.applied.append(candidate)
+
+    async def discard(self, candidate: Any) -> None:
+        del candidate
 
     async def apply(self, config: Any) -> None:
         self.applied.append(config)
@@ -294,6 +330,151 @@ def test_failed_connection_test_keeps_database_and_runtime_unchanged(
     assert len(runtime.applied) == 1
 
 
+def test_failed_candidate_prepare_keeps_database_and_runtime_unchanged(
+    settings: Settings,
+) -> None:
+    clients = configured_client(settings)
+    client, runtime = next(clients)
+    headers = auth_headers(client)
+    try:
+        saved = client.put(
+            "/api/v1/master-settings",
+            headers=headers,
+            json={
+                "scheme": "https",
+                "host": "old-master.example.com",
+                "port": 443,
+                "token": "old-secret",
+            },
+        )
+        old_ciphertext = stored_ciphertext(settings)
+        runtime.prepare_error = RuntimeError("candidate recovery failed")
+
+        with pytest.raises(RuntimeError, match="candidate recovery failed"):
+            client.put(
+                "/api/v1/master-settings",
+                headers=headers,
+                json={
+                    "scheme": "http",
+                    "host": "candidate.example.com",
+                    "port": 8080,
+                    "token": "candidate-secret",
+                },
+            )
+        current_ciphertext = stored_ciphertext(settings)
+        current_address = stored_address(settings)
+    finally:
+        clients.close()
+
+    assert saved.status_code == 200
+    assert current_ciphertext == old_ciphertext
+    assert current_address == ("https", "old-master.example.com", 443)
+    assert len(runtime.applied) == 1
+
+
+def test_failed_candidate_activation_keeps_database_and_runtime_unchanged(
+    settings: Settings,
+) -> None:
+    clients = configured_client(settings)
+    client, runtime = next(clients)
+    headers = auth_headers(client)
+    try:
+        saved = client.put(
+            "/api/v1/master-settings",
+            headers=headers,
+            json={
+                "scheme": "https",
+                "host": "old-master.example.com",
+                "port": 443,
+                "token": "old-secret",
+            },
+        )
+        old_ciphertext = stored_ciphertext(settings)
+        runtime.activate_error = RuntimeError("candidate activation failed")
+
+        with pytest.raises(RuntimeError, match="candidate activation failed"):
+            client.put(
+                "/api/v1/master-settings",
+                headers=headers,
+                json={
+                    "scheme": "http",
+                    "host": "candidate.example.com",
+                    "port": 8080,
+                    "token": "candidate-secret",
+                },
+            )
+        current_ciphertext = stored_ciphertext(settings)
+        current_address = stored_address(settings)
+    finally:
+        clients.close()
+
+    assert saved.status_code == 200
+    assert current_ciphertext == old_ciphertext
+    assert current_address == ("https", "old-master.example.com", 443)
+    assert len(runtime.applied) == 1
+
+
+def test_concurrent_empty_and_new_token_updates_stay_consistent(
+    settings: Settings,
+) -> None:
+    clients = configured_client(settings)
+    client, runtime = next(clients)
+    headers = auth_headers(client)
+    try:
+        seeded = client.put(
+            "/api/v1/master-settings",
+            headers=headers,
+            json={
+                "scheme": "https",
+                "host": "seed.example.com",
+                "port": 443,
+                "token": "seed-secret",
+            },
+        )
+        runtime.test_delay = 0.05
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            empty_future = pool.submit(
+                client.put,
+                "/api/v1/master-settings",
+                headers=headers,
+                json={
+                    "scheme": "http",
+                    "host": "empty-token.example.com",
+                    "port": 8080,
+                    "token": "",
+                },
+            )
+            new_future = pool.submit(
+                client.put,
+                "/api/v1/master-settings",
+                headers=headers,
+                json={
+                    "scheme": "https",
+                    "host": "new-token.example.com",
+                    "port": 9443,
+                    "token": "new-secret",
+                },
+            )
+            responses = [empty_future.result(), new_future.result()]
+        final_address = stored_address(settings)
+        final_token = CredentialCipher(settings.credential_key).decrypt(
+            stored_ciphertext(settings)
+        )
+        final_runtime = runtime.applied[-1]
+    finally:
+        clients.close()
+
+    assert seeded.status_code == 200
+    assert [response.status_code for response in responses] == [200, 200]
+    assert runtime.maximum_reconfiguring == 1
+    assert final_address == (
+        final_runtime.scheme,
+        final_runtime.host,
+        final_runtime.port,
+    )
+    assert final_token == final_runtime.token
+
+
 def test_connection_test_with_empty_token_uses_saved_token_without_applying(
     settings: Settings,
 ) -> None:
@@ -373,6 +554,10 @@ class RuntimeTracker:
         self.active_workers = 0
         self.maximum_workers = 0
         self.fail_recovery = False
+        self.fail_notify_count = 0
+        self.fail_worker_count = 0
+        self.fail_executor_close_count = 0
+        self.fail_client_close_count = 0
 
 
 class FakeRuntimeClient:
@@ -382,6 +567,9 @@ class FakeRuntimeClient:
 
     async def close(self) -> None:
         self.tracker.events.append(f"client-close:{self.token}")
+        if self.tracker.fail_client_close_count:
+            self.tracker.fail_client_close_count -= 1
+            raise RuntimeError("client close failed")
 
 
 class FakeInventory:
@@ -391,6 +579,9 @@ class FakeInventory:
 
     def notify_change(self) -> None:
         self.tracker.events.append(f"notify:{self.client.token}")
+        if self.tracker.fail_notify_count:
+            self.tracker.fail_notify_count -= 1
+            raise RuntimeError("notify failed")
 
     async def run(self, stop: asyncio.Event, claim_callback: Any = None) -> None:
         self.tracker.events.append(f"worker-start:{self.client.token}")
@@ -404,6 +595,9 @@ class FakeInventory:
         finally:
             self.tracker.active_workers -= 1
             self.tracker.events.append(f"worker-stop:{self.client.token}")
+        if self.tracker.fail_worker_count:
+            self.tracker.fail_worker_count -= 1
+            raise RuntimeError("worker stop failed")
 
 
 class FakeExecutor:
@@ -422,9 +616,17 @@ class FakeExecutor:
 
     async def close(self) -> None:
         self.tracker.events.append(f"executor-close:{self.client.token}")
+        if self.tracker.fail_executor_close_count:
+            self.tracker.fail_executor_close_count -= 1
+            raise RuntimeError("executor close failed")
 
 
-def runtime_with_fakes(settings: Settings, tracker: RuntimeTracker) -> Any:
+def runtime_with_fakes(
+    settings: Settings,
+    tracker: RuntimeTracker,
+    *,
+    task_factory: Any = None,
+) -> Any:
     from app.services.master_runtime import MasterRuntime
 
     def client_factory(
@@ -446,16 +648,21 @@ def runtime_with_fakes(settings: Settings, tracker: RuntimeTracker) -> Any:
     def executor_factory(**kwargs: Any) -> FakeExecutor:
         return FakeExecutor(kwargs["master_client"], tracker)
 
+    runtime_kwargs = {
+        "settings": settings,
+        "session_factory": object(),
+        "artifact_service": object(),
+        "gateway": object(),
+        "cipher": CredentialCipher(settings.credential_key),
+        "client_factory": client_factory,
+        "inventory_factory": inventory_factory,
+        "executor_factory": executor_factory,
+        "start_worker": True,
+    }
+    if task_factory is not None:
+        runtime_kwargs["task_factory"] = task_factory
     return MasterRuntime(
-        settings=settings,
-        session_factory=object(),
-        artifact_service=object(),
-        gateway=object(),
-        cipher=CredentialCipher(settings.credential_key),
-        client_factory=client_factory,
-        inventory_factory=inventory_factory,
-        executor_factory=executor_factory,
-        start_worker=True,
+        **runtime_kwargs,
     )
 
 
@@ -511,6 +718,74 @@ async def test_concurrent_runtime_replacements_are_serialized_by_one_worker(
 
 
 @pytest.mark.asyncio
+async def test_candidate_recovery_failure_keeps_old_runtime_running(
+    settings: Settings,
+) -> None:
+    from app.services.master_settings import MasterConfig
+
+    tracker = RuntimeTracker()
+    runtime = runtime_with_fakes(settings, tracker)
+    await runtime.apply(MasterConfig("https", "old.example.com", 443, "old"))
+    await asyncio.sleep(0)
+    tracker.fail_recovery = True
+
+    with pytest.raises(RuntimeError, match="recovery failed"):
+        await runtime.apply(
+            MasterConfig("https", "candidate.example.com", 443, "candidate")
+        )
+
+    assert "worker-stop:old" not in tracker.events
+    assert "client-close:old" not in tracker.events
+    assert tracker.events.count("executor-close:candidate") == 1
+    assert tracker.events.count("client-close:candidate") == 1
+    assert tracker.active_workers == 1
+    assert tracker.maximum_workers == 1
+    assert runtime.status == "running"
+
+    await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_candidate_worker_task_start_failure_keeps_old_runtime_running(
+    settings: Settings,
+) -> None:
+    from app.services.master_settings import MasterConfig
+
+    tracker = RuntimeTracker()
+    task_count = 0
+
+    def task_factory(coro: Any, *, name: str) -> asyncio.Task[None]:
+        nonlocal task_count
+        task_count += 1
+        if task_count == 2:
+            coro.close()
+            raise RuntimeError("worker task start failed")
+        return asyncio.create_task(coro, name=name)
+
+    runtime = runtime_with_fakes(
+        settings,
+        tracker,
+        task_factory=task_factory,
+    )
+    await runtime.apply(MasterConfig("https", "old.example.com", 443, "old"))
+    await asyncio.sleep(0)
+
+    with pytest.raises(RuntimeError, match="worker task start failed"):
+        await runtime.apply(
+            MasterConfig("https", "candidate.example.com", 443, "candidate")
+        )
+
+    assert "worker-stop:old" not in tracker.events
+    assert "client-close:old" not in tracker.events
+    assert tracker.events.count("executor-close:candidate") == 1
+    assert tracker.events.count("client-close:candidate") == 1
+    assert tracker.active_workers == 1
+    assert tracker.maximum_workers == 1
+
+    await runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_failed_runtime_start_closes_new_resources_once(
     settings: Settings,
 ) -> None:
@@ -526,6 +801,36 @@ async def test_failed_runtime_start_closes_new_resources_once(
     assert tracker.events.count("executor-close:secret") == 1
     assert tracker.events.count("client-close:secret") == 1
     assert runtime.status == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_stop_attempts_all_cleanup_and_retries_failed_resources(
+    settings: Settings,
+) -> None:
+    from app.services.master_settings import MasterConfig
+
+    tracker = RuntimeTracker()
+    runtime = runtime_with_fakes(settings, tracker)
+    await runtime.apply(MasterConfig("https", "master.example.com", 443, "secret"))
+    await asyncio.sleep(0)
+    tracker.fail_notify_count = 1
+    tracker.fail_worker_count = 1
+    tracker.fail_executor_close_count = 1
+    tracker.fail_client_close_count = 1
+
+    with pytest.raises(ExceptionGroup) as cleanup_error:
+        await runtime.stop()
+
+    assert len(cleanup_error.value.exceptions) == 4
+    assert tracker.events.count("worker-stop:secret") == 1
+    assert tracker.events.count("executor-close:secret") == 1
+    assert tracker.events.count("client-close:secret") == 1
+    assert runtime.status == "stopped"
+
+    await runtime.stop()
+
+    assert tracker.events.count("executor-close:secret") == 2
+    assert tracker.events.count("client-close:secret") == 2
 
 
 def test_lifespan_cleans_runtime_when_startup_apply_fails(
@@ -552,3 +857,87 @@ def test_lifespan_cleans_runtime_when_startup_apply_fails(
             pass
 
     assert stopped == [True]
+
+
+def test_lifespan_cleans_artifact_client_and_engine_on_early_init_failure(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    import app.main as main_module
+
+    artifact_closed: list[bool] = []
+    engine_disposed: list[bool] = []
+    original_dispose = AsyncEngine.dispose
+
+    class FakeArtifactHttp:
+        def __init__(self, **kwargs: Any) -> None:
+            del kwargs
+
+        async def aclose(self) -> None:
+            artifact_closed.append(True)
+
+    class FailingRuntime:
+        def __init__(self, **kwargs: Any) -> None:
+            del kwargs
+            raise RuntimeError("runtime init failed")
+
+    async def tracked_dispose(engine: AsyncEngine, *args: Any, **kwargs: Any) -> None:
+        engine_disposed.append(True)
+        await original_dispose(engine, *args, **kwargs)
+
+    monkeypatch.setattr(main_module.httpx, "AsyncClient", FakeArtifactHttp)
+    monkeypatch.setattr(main_module, "MasterRuntime", FailingRuntime)
+    monkeypatch.setattr(AsyncEngine, "dispose", tracked_dispose)
+
+    with pytest.raises(RuntimeError, match="runtime init failed"):
+        with TestClient(create_app(settings)):
+            pass
+
+    assert artifact_closed == [True]
+    assert engine_disposed == [True]
+
+
+def test_lifespan_attempts_artifact_and_engine_cleanup_when_runtime_stop_fails(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    import app.main as main_module
+    from app.services.master_runtime import MasterRuntime
+
+    artifact_closed: list[bool] = []
+    engine_disposed: list[bool] = []
+    original_dispose = AsyncEngine.dispose
+
+    class FakeArtifactHttp:
+        def __init__(self, **kwargs: Any) -> None:
+            del kwargs
+
+        async def aclose(self) -> None:
+            artifact_closed.append(True)
+
+    async def no_op_apply(runtime: MasterRuntime, config: Any) -> None:
+        del runtime, config
+
+    async def fail_stop(runtime: MasterRuntime) -> None:
+        del runtime
+        raise RuntimeError("runtime stop failed")
+
+    async def tracked_dispose(engine: AsyncEngine, *args: Any, **kwargs: Any) -> None:
+        engine_disposed.append(True)
+        await original_dispose(engine, *args, **kwargs)
+
+    monkeypatch.setattr(main_module.httpx, "AsyncClient", FakeArtifactHttp)
+    monkeypatch.setattr(MasterRuntime, "apply", no_op_apply)
+    monkeypatch.setattr(MasterRuntime, "stop", fail_stop)
+    monkeypatch.setattr(AsyncEngine, "dispose", tracked_dispose)
+
+    with pytest.raises(RuntimeError, match="runtime stop failed"):
+        with TestClient(create_app(settings)):
+            pass
+
+    assert artifact_closed == [True]
+    assert engine_disposed == [True]

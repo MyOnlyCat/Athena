@@ -36,8 +36,10 @@ async def get_master_settings(
     session: SessionDep,
     _: CurrentUserDep,
 ) -> MasterSettingResponse:
-    config = await service(request, session).get_effective()
-    return response(config, request.app.state.master_runtime.status)
+    runtime = request.app.state.master_runtime
+    async with runtime.reconfigure():
+        config = await service(request, session).get_effective()
+        return response(config, runtime.status)
 
 
 @router.post("/test", response_model=MasterConnectionTestResponse)
@@ -47,9 +49,11 @@ async def test_master_settings(
     session: SessionDep,
     _: CurrentUserDep,
 ) -> MasterConnectionTestResponse:
-    config = await service(request, session).resolve(data)
-    await request.app.state.master_runtime.test(config)
-    return MasterConnectionTestResponse()
+    runtime = request.app.state.master_runtime
+    async with runtime.reconfigure():
+        config = await service(request, session).resolve(data)
+        await runtime.test(config)
+        return MasterConnectionTestResponse()
 
 
 @router.put("", response_model=MasterSettingResponse)
@@ -59,10 +63,28 @@ async def update_master_settings(
     session: SessionDep,
     _: CurrentUserDep,
 ) -> MasterSettingResponse:
+    runtime = request.app.state.master_runtime
     settings_service = service(request, session)
-    config = await settings_service.resolve(data)
-    await request.app.state.master_runtime.test(config)
-    await settings_service.save(data, config)
-    await session.commit()
-    await request.app.state.master_runtime.apply(config)
-    return response(config, request.app.state.master_runtime.status)
+    async with runtime.reconfigure():
+        previous_config = await settings_service.get_effective()
+        config = await settings_service.resolve(data)
+        await runtime.test(config)
+        candidate = await runtime.prepare(config)
+        activated = False
+        try:
+            await settings_service.save(data, config)
+            await runtime.activate(candidate)
+            activated = True
+            await session.commit()
+        except BaseException as exc:
+            await session.rollback()
+            if activated:
+                try:
+                    rollback_candidate = await runtime.prepare(previous_config)
+                    await runtime.activate(rollback_candidate)
+                except BaseException as rollback_error:
+                    exc.add_note(f"runtime rollback failed: {rollback_error!r}")
+            else:
+                await runtime.discard(candidate)
+            raise
+        return response(config, runtime.status)

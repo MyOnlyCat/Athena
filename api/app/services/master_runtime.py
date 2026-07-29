@@ -1,5 +1,7 @@
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 
 from app.core.config import Settings
@@ -11,6 +13,23 @@ from app.services.master_client import MasterClient
 from app.services.master_settings import MasterConfig
 
 RuntimeCallback = Callable[[Any | None, Any | None], None]
+WorkerCoroutine = Coroutine[Any, Any, None]
+TaskFactory = Callable[..., asyncio.Task[None]]
+
+
+@dataclass
+class RuntimeSlot:
+    config: MasterConfig
+    client: Any | None = None
+    inventory: Any | None = None
+    executor: Any | None = None
+    stop_event: asyncio.Event | None = None
+    activation_event: asyncio.Event | None = None
+    worker: asyncio.Task[None] | None = None
+
+    @property
+    def has_resources(self) -> bool:
+        return self.worker is not None or self.executor is not None or self.client is not None
 
 
 class MasterRuntime:
@@ -25,6 +44,7 @@ class MasterRuntime:
         client_factory: Callable[..., Any] = MasterClient,
         inventory_factory: Callable[..., Any] = InventorySynchronizer,
         executor_factory: Callable[..., Any] = DeploymentExecutor,
+        task_factory: TaskFactory = asyncio.create_task,
         start_worker: bool = True,
         on_change: RuntimeCallback | None = None,
     ) -> None:
@@ -36,22 +56,28 @@ class MasterRuntime:
         self.client_factory = client_factory
         self.inventory_factory = inventory_factory
         self.executor_factory = executor_factory
+        self.task_factory = task_factory
         self.start_worker = start_worker
         self.on_change = on_change
         self._lock = asyncio.Lock()
-        self._client: Any | None = None
-        self._inventory: Any | None = None
-        self._executor: Any | None = None
-        self._stop_event: asyncio.Event | None = None
-        self._worker: asyncio.Task[None] | None = None
+        self._active: RuntimeSlot | None = None
+        self._retired: list[RuntimeSlot] = []
 
     @property
     def status(self) -> str:
-        if self._worker is not None and not self._worker.done():
+        slot = self._active
+        if slot is None:
+            return "stopped"
+        if slot.worker is not None and not slot.worker.done():
             return "running"
-        if self._client is not None:
+        if slot.client is not None:
             return "configured"
         return "stopped"
+
+    @asynccontextmanager
+    async def reconfigure(self) -> AsyncIterator[None]:
+        async with self._lock:
+            yield
 
     async def test(self, config: MasterConfig) -> None:
         client = self.client_factory(
@@ -77,77 +103,180 @@ class MasterRuntime:
         finally:
             await client.close()
 
-    async def apply(self, config: MasterConfig) -> None:
-        async with self._lock:
-            await self._stop_locked()
-            if not config.host or not config.token:
-                return
+    async def prepare(self, config: MasterConfig) -> RuntimeSlot:
+        candidate = RuntimeSlot(config=config)
+        if not config.host or not config.token:
+            return candidate
 
-            client = self.client_factory(
+        try:
+            candidate.client = self.client_factory(
                 config.base_url,
                 self.settings.node_id,
                 config.token,
             )
-            try:
-                inventory = self.inventory_factory(
-                    self.settings,
-                    self.session_factory,
-                    client,
-                )
-                executor = self.executor_factory(
-                    session_factory=self.session_factory,
-                    master_client=client,
-                    artifact_service=self.artifact_service,
-                    gateway=self.gateway,
-                    cipher=self.cipher,
-                    concurrency=self.settings.deploy_concurrency,
-                )
-                self._client = client
-                self._inventory = inventory
-                self._executor = executor
-                self._publish()
-                if self.start_worker:
-                    await executor.recover()
-                    self._stop_event = asyncio.Event()
-                    self._worker = asyncio.create_task(
-                        inventory.run(self._stop_event, executor.poll),
+            candidate.inventory = self.inventory_factory(
+                self.settings,
+                self.session_factory,
+                candidate.client,
+            )
+            candidate.executor = self.executor_factory(
+                session_factory=self.session_factory,
+                master_client=candidate.client,
+                artifact_service=self.artifact_service,
+                gateway=self.gateway,
+                cipher=self.cipher,
+                concurrency=self.settings.deploy_concurrency,
+            )
+            if self.start_worker:
+                await candidate.executor.recover()
+                candidate.stop_event = asyncio.Event()
+                candidate.activation_event = asyncio.Event()
+                ready = asyncio.Event()
+                worker_coroutine = self._run_candidate(candidate, ready)
+                try:
+                    candidate.worker = self.task_factory(
+                        worker_coroutine,
                         name="master-runtime",
                     )
-            except Exception:
-                if self._client is client:
-                    await self._stop_locked()
-                else:
-                    await client.close()
-                raise
+                except BaseException:
+                    worker_coroutine.close()
+                    raise
+                await ready.wait()
+                if candidate.worker.done():
+                    await candidate.worker
+        except BaseException as exc:
+            cleanup_errors = await self._cleanup_slot(candidate)
+            if candidate.has_resources:
+                self._retired.append(candidate)
+            for error in cleanup_errors:
+                exc.add_note(f"candidate cleanup failed: {error!r}")
+            raise
+        return candidate
+
+    async def activate(self, candidate: RuntimeSlot) -> None:
+        previous = self._active
+        self._active = None
+        if previous is not None:
+            await self._retire(previous)
+
+        if not candidate.has_resources:
+            self._publish(None, None)
+            return
+
+        self._active = candidate
+        self._publish(candidate.inventory, candidate.executor)
+        if candidate.activation_event is not None:
+            candidate.activation_event.set()
+
+    async def discard(self, candidate: RuntimeSlot) -> None:
+        if candidate is self._active:
+            return
+        await self._retire(candidate)
+
+    async def apply(self, config: MasterConfig) -> None:
+        async with self.reconfigure():
+            candidate = await self.prepare(config)
+            await self.activate(candidate)
 
     async def stop(self) -> None:
-        async with self._lock:
-            await self._stop_locked()
+        async with self.reconfigure():
+            cleanup_errors: list[Exception] = []
+            pending_retired = self._retired
+            self._retired = []
+            retained: list[RuntimeSlot] = []
+            active = self._active
+            self._active = None
+            if active is not None:
+                cleanup_errors.extend(await self._cleanup_slot(active))
+                if active.has_resources:
+                    retained.append(active)
 
-    async def _stop_locked(self) -> None:
-        stop_event = self._stop_event
-        worker = self._worker
-        inventory = self._inventory
-        executor = self._executor
-        client = self._client
-        self._stop_event = None
-        self._worker = None
-        self._inventory = None
-        self._executor = None
-        self._client = None
+            for slot in pending_retired:
+                cleanup_errors.extend(await self._cleanup_slot(slot))
+                if slot.has_resources:
+                    retained.append(slot)
+            self._retired = retained
+            cleanup_errors.extend(self._publish(None, None))
 
-        if stop_event is not None:
-            stop_event.set()
-        if inventory is not None:
-            inventory.notify_change()
-        if worker is not None:
-            await worker
-        if executor is not None:
-            await executor.close()
-        if client is not None:
-            await client.close()
-        self._publish()
+            if cleanup_errors:
+                raise ExceptionGroup("master runtime cleanup failed", cleanup_errors)
 
-    def _publish(self) -> None:
-        if self.on_change is not None:
-            self.on_change(self._inventory, self._executor)
+    async def _run_candidate(
+        self,
+        candidate: RuntimeSlot,
+        ready: asyncio.Event,
+    ) -> None:
+        ready.set()
+        activation_event = candidate.activation_event
+        stop_event = candidate.stop_event
+        if activation_event is None or stop_event is None:
+            return
+        await activation_event.wait()
+        if stop_event.is_set():
+            return
+        inventory = candidate.inventory
+        executor = candidate.executor
+        if inventory is None or executor is None:
+            return
+        await inventory.run(stop_event, executor.poll)
+
+    async def _retire(self, slot: RuntimeSlot) -> None:
+        cleanup_errors = await self._cleanup_slot(slot)
+        if slot.has_resources and slot not in self._retired:
+            self._retired.append(slot)
+        for error in cleanup_errors:
+            error.add_note("retired runtime cleanup will be retried during stop")
+
+    async def _cleanup_slot(self, slot: RuntimeSlot) -> list[Exception]:
+        errors: list[Exception] = []
+        if slot.stop_event is not None:
+            slot.stop_event.set()
+        if slot.activation_event is not None:
+            slot.activation_event.set()
+
+        if slot.inventory is not None:
+            try:
+                slot.inventory.notify_change()
+            except Exception as exc:
+                errors.append(exc)
+            slot.inventory = None
+
+        if slot.worker is not None:
+            results = await asyncio.gather(slot.worker, return_exceptions=True)
+            result = results[0]
+            if isinstance(result, Exception):
+                errors.append(result)
+            slot.worker = None
+            slot.stop_event = None
+            slot.activation_event = None
+
+        if slot.executor is not None:
+            try:
+                await slot.executor.close()
+            except Exception as exc:
+                errors.append(exc)
+            else:
+                slot.executor = None
+
+        if slot.client is not None:
+            try:
+                await slot.client.close()
+            except Exception as exc:
+                errors.append(exc)
+            else:
+                slot.client = None
+
+        return errors
+
+    def _publish(
+        self,
+        inventory: Any | None,
+        executor: Any | None,
+    ) -> list[Exception]:
+        if self.on_change is None:
+            return []
+        try:
+            self.on_change(inventory, executor)
+        except Exception as exc:
+            return [exc]
+        return []

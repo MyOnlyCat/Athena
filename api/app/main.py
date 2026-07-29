@@ -1,3 +1,4 @@
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -41,32 +42,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine = create_engine(active_settings)
-        app.state.db_engine = engine
-        app.state.session_factory = create_session_factory(engine)
-        artifact_http = httpx.AsyncClient(timeout=None)
-
-        def publish_runtime(inventory: Any | None, executor: Any | None) -> None:
-            app.state.inventory_sync = inventory or InventorySynchronizer(
-                active_settings,
-                app.state.session_factory,
-            )
-            app.state.deployment_executor = executor
-
-        master_runtime = MasterRuntime(
-            settings=active_settings,
-            session_factory=app.state.session_factory,
-            artifact_service=ArtifactService(
-                artifact_http,
-                active_settings.data_dir / "artifacts",
-                allow_http=active_settings.allow_http_artifacts,
-            ),
-            gateway=AsyncDeploymentGateway(),
-            cipher=CredentialCipher(active_settings.credential_key),
-            start_worker=active_settings.environment != "test",
-            on_change=publish_runtime,
-        )
-        app.state.master_runtime = master_runtime
+        artifact_http: httpx.AsyncClient | None = None
+        master_runtime: MasterRuntime | None = None
         try:
+            app.state.db_engine = engine
+            app.state.session_factory = create_session_factory(engine)
+            artifact_http = httpx.AsyncClient(timeout=None)
+
+            def publish_runtime(inventory: Any | None, executor: Any | None) -> None:
+                app.state.inventory_sync = inventory or InventorySynchronizer(
+                    active_settings,
+                    app.state.session_factory,
+                )
+                app.state.deployment_executor = executor
+
+            master_runtime = MasterRuntime(
+                settings=active_settings,
+                session_factory=app.state.session_factory,
+                artifact_service=ArtifactService(
+                    artifact_http,
+                    active_settings.data_dir / "artifacts",
+                    allow_http=active_settings.allow_http_artifacts,
+                ),
+                gateway=AsyncDeploymentGateway(),
+                cipher=CredentialCipher(active_settings.credential_key),
+                start_worker=active_settings.environment != "test",
+                on_change=publish_runtime,
+            )
+            app.state.master_runtime = master_runtime
             async with engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)
             if active_settings.bootstrap_username and active_settings.bootstrap_password:
@@ -91,9 +94,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await master_runtime.apply(config)
             yield
         finally:
-            await master_runtime.stop()
-            await artifact_http.aclose()
-            await engine.dispose()
+            active_error = sys.exception()
+            cleanup_errors: list[Exception] = []
+            if master_runtime is not None:
+                try:
+                    await master_runtime.stop()
+                except Exception as exc:
+                    cleanup_errors.append(exc)
+            if artifact_http is not None:
+                try:
+                    await artifact_http.aclose()
+                except Exception as exc:
+                    cleanup_errors.append(exc)
+            try:
+                await engine.dispose()
+            except Exception as exc:
+                cleanup_errors.append(exc)
+
+            if active_error is not None:
+                for error in cleanup_errors:
+                    active_error.add_note(f"lifespan cleanup failed: {error!r}")
+            elif len(cleanup_errors) == 1:
+                raise cleanup_errors[0]
+            elif cleanup_errors:
+                raise ExceptionGroup("lifespan cleanup failed", cleanup_errors)
 
     app = FastAPI(
         title="Athena Node API",
