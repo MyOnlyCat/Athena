@@ -56,7 +56,7 @@ export function DashboardPage() {
       <section className="content-card">
         <div className="section-heading">
           <div>
-            <h2>最近发布任务</h2>
+            <h2>最近任务</h2>
             <p>从主节点领取的最新任务状态</p>
           </div>
         </div>
@@ -65,7 +65,7 @@ export function DashboardPage() {
           dataSource={(tasks.data ?? []).slice(0, 6)}
           loading={tasks.isLoading}
           pagination={false}
-          locale={{ emptyText: "暂无发布任务" }}
+          locale={{ emptyText: "暂无任务" }}
           columns={[
             { title: "任务 ID", dataIndex: "master_task_id", className: "mono" },
             { title: "制品", dataIndex: "artifact_name" },

@@ -28,7 +28,7 @@ export function TasksPage() {
       <header className="page-header">
         <div>
           <p className="eyebrow">DEPLOYMENT</p>
-          <h1>发布任务</h1>
+          <h1>当前任务</h1>
           <p>查看主节点下发任务的实时阶段、日志和结果。</p>
         </div>
       </header>
