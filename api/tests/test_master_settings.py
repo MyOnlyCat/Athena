@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 from collections.abc import Iterator
+from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -33,8 +34,8 @@ class FakeMasterRuntime:
         self.applied: list[Any] = []
         self.test_error: AppError | None = None
         self.prepare_error: Exception | None = None
-        self.activate_error: Exception | None = None
         self.test_delay = 0.0
+        self.discarded: list[Any] = []
         self.reconfiguring = 0
         self.maximum_reconfiguring = 0
         self._reconfigure_lock = asyncio.Lock()
@@ -65,12 +66,10 @@ class FakeMasterRuntime:
         return config
 
     async def activate(self, candidate: Any) -> None:
-        if self.activate_error is not None:
-            raise self.activate_error
         self.applied.append(candidate)
 
     async def discard(self, candidate: Any) -> None:
-        del candidate
+        self.discarded.append(candidate)
 
     async def apply(self, config: Any) -> None:
         self.applied.append(config)
@@ -372,14 +371,26 @@ def test_failed_candidate_prepare_keeps_database_and_runtime_unchanged(
     assert len(runtime.applied) == 1
 
 
-def test_failed_candidate_activation_keeps_database_and_runtime_unchanged(
+def test_failed_database_commit_keeps_old_runtime_and_discards_candidate(
     settings: Settings,
 ) -> None:
+    from app.api.deps import get_session
+
+    class CommitFailingSession:
+        def __init__(self, session: Any) -> None:
+            self.session = session
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.session, name)
+
+        async def commit(self) -> None:
+            raise RuntimeError("settings commit failed")
+
     clients = configured_client(settings)
     client, runtime = next(clients)
     headers = auth_headers(client)
     try:
-        saved = client.put(
+        seeded = client.put(
             "/api/v1/master-settings",
             headers=headers,
             json={
@@ -389,10 +400,15 @@ def test_failed_candidate_activation_keeps_database_and_runtime_unchanged(
                 "token": "old-secret",
             },
         )
+        old_runtime = runtime.applied[-1]
         old_ciphertext = stored_ciphertext(settings)
-        runtime.activate_error = RuntimeError("candidate activation failed")
 
-        with pytest.raises(RuntimeError, match="candidate activation failed"):
+        async def failing_session():
+            async with client.app.state.session_factory() as session:
+                yield CommitFailingSession(session)
+
+        client.app.dependency_overrides[get_session] = failing_session
+        with pytest.raises(RuntimeError, match="settings commit failed"):
             client.put(
                 "/api/v1/master-settings",
                 headers=headers,
@@ -403,15 +419,19 @@ def test_failed_candidate_activation_keeps_database_and_runtime_unchanged(
                     "token": "candidate-secret",
                 },
             )
+        client.app.dependency_overrides.clear()
         current_ciphertext = stored_ciphertext(settings)
         current_address = stored_address(settings)
     finally:
+        client.app.dependency_overrides.clear()
         clients.close()
 
-    assert saved.status_code == 200
+    assert seeded.status_code == 200
     assert current_ciphertext == old_ciphertext
     assert current_address == ("https", "old-master.example.com", 443)
-    assert len(runtime.applied) == 1
+    assert runtime.applied == [old_runtime]
+    assert len(runtime.discarded) == 1
+    assert runtime.discarded[0].host == "candidate.example.com"
 
 
 def test_concurrent_empty_and_new_token_updates_stay_consistent(
@@ -548,6 +568,84 @@ async def test_master_client_connection_test_is_signed() -> None:
     assert observed[0].url.path == "/api/node/v1/nodes/heartbeat"
 
 
+@pytest.mark.asyncio
+async def test_hot_candidate_never_recovers_executing_deployments(
+    settings: Settings,
+) -> None:
+    from sqlalchemy import select
+
+    from app.core.database import Base, create_engine, create_session_factory
+    from app.models.deployment import DeploymentTarget, DeploymentTask
+    from app.services.master_runtime import MasterRuntime
+    from app.services.master_settings import MasterConfig
+
+    engine = create_engine(settings)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    session_factory = create_session_factory(engine)
+    async with session_factory() as session:
+        session.add(
+            DeploymentTask(
+                master_task_id="executing-during-settings-update",
+                artifact_url="https://artifacts.example/app.jar",
+                artifact_sha256="a" * 64,
+                artifact_name="app.jar",
+                status="running",
+                targets=[
+                    DeploymentTarget(
+                        target_ip="10.0.0.10",
+                        target_directory="/opt/apps/example",
+                        command="systemctl restart example",
+                        status="executing",
+                    )
+                ],
+            )
+        )
+        await session.commit()
+
+    tracker = RuntimeTracker()
+
+    def client_factory(base_url: str, node_id: str, token: str) -> FakeRuntimeClient:
+        del base_url, node_id
+        return FakeRuntimeClient(token, tracker)
+
+    def inventory_factory(
+        active_settings: Settings,
+        active_session_factory: Any,
+        client: FakeRuntimeClient,
+    ) -> FakeInventory:
+        del active_settings, active_session_factory
+        return FakeInventory(client, tracker)
+
+    runtime = MasterRuntime(
+        settings=settings,
+        session_factory=session_factory,
+        artifact_service=object(),
+        gateway=object(),
+        cipher=CredentialCipher(settings.credential_key),
+        client_factory=client_factory,
+        inventory_factory=inventory_factory,
+        start_worker=True,
+    )
+    config = MasterConfig("https", "master.example.com", 443, "secret")
+
+    try:
+        candidate = await runtime.prepare(config)
+        await runtime.discard(candidate)
+        async with session_factory() as session:
+            hot_status = await session.scalar(select(DeploymentTarget.status))
+
+        await runtime.apply(config, recover=True)
+        async with session_factory() as session:
+            cold_status = await session.scalar(select(DeploymentTarget.status))
+    finally:
+        await runtime.stop()
+        await engine.dispose()
+
+    assert hot_status == "executing"
+    assert cold_status == "manual_review"
+
+
 class RuntimeTracker:
     def __init__(self) -> None:
         self.events: list[str] = []
@@ -558,6 +656,8 @@ class RuntimeTracker:
         self.fail_worker_count = 0
         self.fail_executor_close_count = 0
         self.fail_client_close_count = 0
+        self.executor_close_started: asyncio.Event | None = None
+        self.executor_close_release: asyncio.Event | None = None
 
 
 class FakeRuntimeClient:
@@ -616,6 +716,10 @@ class FakeExecutor:
 
     async def close(self) -> None:
         self.tracker.events.append(f"executor-close:{self.client.token}")
+        if self.tracker.executor_close_started is not None:
+            self.tracker.executor_close_started.set()
+        if self.tracker.executor_close_release is not None:
+            await self.tracker.executor_close_release.wait()
         if self.tracker.fail_executor_close_count:
             self.tracker.fail_executor_close_count -= 1
             raise RuntimeError("executor close failed")
@@ -731,7 +835,8 @@ async def test_candidate_recovery_failure_keeps_old_runtime_running(
 
     with pytest.raises(RuntimeError, match="recovery failed"):
         await runtime.apply(
-            MasterConfig("https", "candidate.example.com", 443, "candidate")
+            MasterConfig("https", "candidate.example.com", 443, "candidate"),
+            recover=True,
         )
 
     assert "worker-stop:old" not in tracker.events
@@ -796,7 +901,10 @@ async def test_failed_runtime_start_closes_new_resources_once(
     runtime = runtime_with_fakes(settings, tracker)
 
     with pytest.raises(RuntimeError, match="recovery failed"):
-        await runtime.apply(MasterConfig("https", "master.example.com", 443, "secret"))
+        await runtime.apply(
+            MasterConfig("https", "master.example.com", 443, "secret"),
+            recover=True,
+        )
 
     assert tracker.events.count("executor-close:secret") == 1
     assert tracker.events.count("client-close:secret") == 1
@@ -833,6 +941,73 @@ async def test_stop_attempts_all_cleanup_and_retries_failed_resources(
     assert tracker.events.count("client-close:secret") == 2
 
 
+@pytest.mark.asyncio
+async def test_cancelled_stop_finishes_cleanup_without_losing_owned_slot(
+    settings: Settings,
+) -> None:
+    from app.services.master_settings import MasterConfig
+
+    tracker = RuntimeTracker()
+    tracker.executor_close_started = asyncio.Event()
+    tracker.executor_close_release = asyncio.Event()
+    runtime = runtime_with_fakes(settings, tracker)
+    await runtime.apply(MasterConfig("https", "master.example.com", 443, "secret"))
+    await asyncio.sleep(0)
+
+    stop_task = asyncio.create_task(runtime.stop())
+    await tracker.executor_close_started.wait()
+    stop_task.cancel()
+    tracker.executor_close_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await stop_task
+
+    assert tracker.events.count("worker-stop:secret") == 1
+    assert tracker.events.count("executor-close:secret") == 1
+    assert tracker.events.count("client-close:secret") == 1
+    assert runtime.status == "stopped"
+
+    await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_activation_completes_atomic_swap_with_one_worker(
+    settings: Settings,
+) -> None:
+    from app.services.master_settings import MasterConfig
+
+    tracker = RuntimeTracker()
+    runtime = runtime_with_fakes(settings, tracker)
+    await runtime.apply(MasterConfig("https", "old.example.com", 443, "old"))
+    await asyncio.sleep(0)
+    candidate = await runtime.prepare(
+        MasterConfig("https", "candidate.example.com", 443, "candidate")
+    )
+    tracker.executor_close_started = asyncio.Event()
+    tracker.executor_close_release = asyncio.Event()
+
+    activation_task = asyncio.create_task(runtime.activate(candidate))
+    await tracker.executor_close_started.wait()
+    activation_task.cancel()
+    tracker.executor_close_release.set()
+
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await activation_task
+        await asyncio.sleep(0)
+
+        assert tracker.events.count("worker-stop:old") == 1
+        assert tracker.events.count("client-close:old") == 1
+        assert tracker.events.count("worker-start:candidate") == 1
+        assert tracker.active_workers == 1
+        assert tracker.maximum_workers == 1
+        assert runtime.status == "running"
+    finally:
+        tracker.executor_close_release.set()
+        await runtime.discard(candidate)
+        await runtime.stop()
+
+
 def test_lifespan_cleans_runtime_when_startup_apply_fails(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
@@ -841,8 +1016,13 @@ def test_lifespan_cleans_runtime_when_startup_apply_fails(
 
     stopped: list[bool] = []
 
-    async def fail_apply(runtime: MasterRuntime, config: Any) -> None:
-        del runtime, config
+    async def fail_apply(
+        runtime: MasterRuntime,
+        config: Any,
+        *,
+        recover: bool = False,
+    ) -> None:
+        del runtime, config, recover
         raise RuntimeError("startup apply failed")
 
     async def record_stop(runtime: MasterRuntime) -> None:
@@ -919,8 +1099,13 @@ def test_lifespan_attempts_artifact_and_engine_cleanup_when_runtime_stop_fails(
         async def aclose(self) -> None:
             artifact_closed.append(True)
 
-    async def no_op_apply(runtime: MasterRuntime, config: Any) -> None:
-        del runtime, config
+    async def no_op_apply(
+        runtime: MasterRuntime,
+        config: Any,
+        *,
+        recover: bool = False,
+    ) -> None:
+        del runtime, config, recover
 
     async def fail_stop(runtime: MasterRuntime) -> None:
         del runtime
@@ -936,6 +1121,55 @@ def test_lifespan_attempts_artifact_and_engine_cleanup_when_runtime_stop_fails(
     monkeypatch.setattr(AsyncEngine, "dispose", tracked_dispose)
 
     with pytest.raises(RuntimeError, match="runtime stop failed"):
+        with TestClient(create_app(settings)):
+            pass
+
+    assert artifact_closed == [True]
+    assert engine_disposed == [True]
+
+
+def test_lifespan_attempts_artifact_and_engine_cleanup_on_cancellation(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    import app.main as main_module
+    from app.services.master_runtime import MasterRuntime
+
+    artifact_closed: list[bool] = []
+    engine_disposed: list[bool] = []
+    original_dispose = AsyncEngine.dispose
+
+    class FakeArtifactHttp:
+        def __init__(self, **kwargs: Any) -> None:
+            del kwargs
+
+        async def aclose(self) -> None:
+            artifact_closed.append(True)
+
+    async def no_op_apply(
+        runtime: MasterRuntime,
+        config: Any,
+        *,
+        recover: bool = False,
+    ) -> None:
+        del runtime, config, recover
+
+    async def cancel_stop(runtime: MasterRuntime) -> None:
+        del runtime
+        raise asyncio.CancelledError
+
+    async def tracked_dispose(engine: AsyncEngine, *args: Any, **kwargs: Any) -> None:
+        engine_disposed.append(True)
+        await original_dispose(engine, *args, **kwargs)
+
+    monkeypatch.setattr(main_module.httpx, "AsyncClient", FakeArtifactHttp)
+    monkeypatch.setattr(MasterRuntime, "apply", no_op_apply)
+    monkeypatch.setattr(MasterRuntime, "stop", cancel_stop)
+    monkeypatch.setattr(AsyncEngine, "dispose", tracked_dispose)
+
+    with pytest.raises((asyncio.CancelledError, FutureCancelledError)):
         with TestClient(create_app(settings)):
             pass
 

@@ -91,24 +91,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     active_settings,
                     CredentialCipher(active_settings.credential_key),
                 ).get_effective()
-            await master_runtime.apply(config)
+            await master_runtime.apply(config, recover=True)
             yield
         finally:
             active_error = sys.exception()
-            cleanup_errors: list[Exception] = []
+            cleanup_errors: list[BaseException] = []
             if master_runtime is not None:
                 try:
                     await master_runtime.stop()
-                except Exception as exc:
+                except BaseException as exc:
                     cleanup_errors.append(exc)
             if artifact_http is not None:
                 try:
                     await artifact_http.aclose()
-                except Exception as exc:
+                except BaseException as exc:
                     cleanup_errors.append(exc)
             try:
                 await engine.dispose()
-            except Exception as exc:
+            except BaseException as exc:
                 cleanup_errors.append(exc)
 
             if active_error is not None:
@@ -117,7 +117,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             elif len(cleanup_errors) == 1:
                 raise cleanup_errors[0]
             elif cleanup_errors:
-                raise ExceptionGroup("lifespan cleanup failed", cleanup_errors)
+                raise BaseExceptionGroup("lifespan cleanup failed", cleanup_errors)
 
     app = FastAPI(
         title="Athena Node API",

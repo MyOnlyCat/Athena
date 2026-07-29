@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from app.core.config import Settings
 from app.core.errors import AppError
@@ -15,6 +15,7 @@ from app.services.master_settings import MasterConfig
 RuntimeCallback = Callable[[Any | None, Any | None], None]
 WorkerCoroutine = Coroutine[Any, Any, None]
 TaskFactory = Callable[..., asyncio.Task[None]]
+ShieldedResult = TypeVar("ShieldedResult")
 
 
 @dataclass
@@ -128,7 +129,6 @@ class MasterRuntime:
                 concurrency=self.settings.deploy_concurrency,
             )
             if self.start_worker:
-                await candidate.executor.recover()
                 candidate.stop_event = asyncio.Event()
                 candidate.activation_event = asyncio.Event()
                 ready = asyncio.Event()
@@ -145,7 +145,10 @@ class MasterRuntime:
                 if candidate.worker.done():
                     await candidate.worker
         except BaseException as exc:
-            cleanup_errors = await self._cleanup_slot(candidate)
+            cleanup_errors = await self._shielded(
+                self._cleanup_slot(candidate),
+                name="master-runtime-prepare-cleanup",
+            )
             if candidate.has_resources:
                 self._retired.append(candidate)
             for error in cleanup_errors:
@@ -154,6 +157,12 @@ class MasterRuntime:
         return candidate
 
     async def activate(self, candidate: RuntimeSlot) -> None:
+        await self._shielded(
+            self._activate_owned(candidate),
+            name="master-runtime-activation",
+        )
+
+    async def _activate_owned(self, candidate: RuntimeSlot) -> None:
         previous = self._active
         self._active = None
         if previous is not None:
@@ -171,35 +180,50 @@ class MasterRuntime:
     async def discard(self, candidate: RuntimeSlot) -> None:
         if candidate is self._active:
             return
-        await self._retire(candidate)
+        await self._shielded(
+            self._retire(candidate),
+            name="master-runtime-discard",
+        )
 
-    async def apply(self, config: MasterConfig) -> None:
+    async def apply(self, config: MasterConfig, *, recover: bool = False) -> None:
         async with self.reconfigure():
             candidate = await self.prepare(config)
+            try:
+                if recover and candidate.executor is not None:
+                    await candidate.executor.recover()
+            except BaseException:
+                await self.discard(candidate)
+                raise
             await self.activate(candidate)
 
     async def stop(self) -> None:
         async with self.reconfigure():
-            cleanup_errors: list[Exception] = []
-            pending_retired = self._retired
-            self._retired = []
-            retained: list[RuntimeSlot] = []
-            active = self._active
-            self._active = None
-            if active is not None:
-                cleanup_errors.extend(await self._cleanup_slot(active))
-                if active.has_resources:
-                    retained.append(active)
+            await self._shielded(
+                self._stop_owned(),
+                name="master-runtime-stop",
+            )
 
-            for slot in pending_retired:
-                cleanup_errors.extend(await self._cleanup_slot(slot))
-                if slot.has_resources:
-                    retained.append(slot)
-            self._retired = retained
-            cleanup_errors.extend(self._publish(None, None))
+    async def _stop_owned(self) -> None:
+        cleanup_errors: list[Exception] = []
+        pending_retired = self._retired
+        self._retired = []
+        retained: list[RuntimeSlot] = []
+        active = self._active
+        self._active = None
+        if active is not None:
+            cleanup_errors.extend(await self._cleanup_slot(active))
+            if active.has_resources:
+                retained.append(active)
 
-            if cleanup_errors:
-                raise ExceptionGroup("master runtime cleanup failed", cleanup_errors)
+        for slot in pending_retired:
+            cleanup_errors.extend(await self._cleanup_slot(slot))
+            if slot.has_resources:
+                retained.append(slot)
+        self._retired = retained
+        cleanup_errors.extend(self._publish(None, None))
+
+        if cleanup_errors:
+            raise ExceptionGroup("master runtime cleanup failed", cleanup_errors)
 
     async def _run_candidate(
         self,
@@ -237,15 +261,15 @@ class MasterRuntime:
         if slot.inventory is not None:
             try:
                 slot.inventory.notify_change()
-            except Exception as exc:
-                errors.append(exc)
+            except BaseException as exc:
+                errors.append(self._cleanup_error("inventory wakeup", exc))
             slot.inventory = None
 
         if slot.worker is not None:
             results = await asyncio.gather(slot.worker, return_exceptions=True)
             result = results[0]
-            if isinstance(result, Exception):
-                errors.append(result)
+            if isinstance(result, BaseException):
+                errors.append(self._cleanup_error("worker stop", result))
             slot.worker = None
             slot.stop_event = None
             slot.activation_event = None
@@ -253,20 +277,55 @@ class MasterRuntime:
         if slot.executor is not None:
             try:
                 await slot.executor.close()
-            except Exception as exc:
-                errors.append(exc)
+            except BaseException as exc:
+                errors.append(self._cleanup_error("executor close", exc))
             else:
                 slot.executor = None
 
         if slot.client is not None:
             try:
                 await slot.client.close()
-            except Exception as exc:
-                errors.append(exc)
+            except BaseException as exc:
+                errors.append(self._cleanup_error("client close", exc))
             else:
                 slot.client = None
 
         return errors
+
+    async def _shielded(
+        self,
+        operation: Coroutine[Any, Any, ShieldedResult],
+        *,
+        name: str,
+    ) -> ShieldedResult:
+        task = asyncio.create_task(operation, name=name)
+        cancellation: asyncio.CancelledError | None = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+
+        try:
+            result = task.result()
+        except BaseException as operation_error:
+            if cancellation is not None:
+                cancellation.add_note(
+                    f"{name} also failed: {operation_error!r}"
+                )
+                raise cancellation from operation_error
+            raise
+        if cancellation is not None:
+            raise cancellation
+        return result
+
+    @staticmethod
+    def _cleanup_error(stage: str, error: BaseException) -> Exception:
+        if isinstance(error, Exception):
+            return error
+        wrapped = RuntimeError(f"{stage} was cancelled")
+        wrapped.__cause__ = error
+        return wrapped
 
     def _publish(
         self,

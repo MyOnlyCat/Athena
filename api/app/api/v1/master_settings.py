@@ -66,25 +66,15 @@ async def update_master_settings(
     runtime = request.app.state.master_runtime
     settings_service = service(request, session)
     async with runtime.reconfigure():
-        previous_config = await settings_service.get_effective()
         config = await settings_service.resolve(data)
         await runtime.test(config)
         candidate = await runtime.prepare(config)
-        activated = False
         try:
             await settings_service.save(data, config)
-            await runtime.activate(candidate)
-            activated = True
             await session.commit()
-        except BaseException as exc:
+        except BaseException:
             await session.rollback()
-            if activated:
-                try:
-                    rollback_candidate = await runtime.prepare(previous_config)
-                    await runtime.activate(rollback_candidate)
-                except BaseException as rollback_error:
-                    exc.add_note(f"runtime rollback failed: {rollback_error!r}")
-            else:
-                await runtime.discard(candidate)
+            await runtime.discard(candidate)
             raise
+        await runtime.activate(candidate)
         return response(config, runtime.status)
