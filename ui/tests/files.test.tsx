@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { App, Modal } from "antd";
 import userEvent from "@testing-library/user-event";
 import { afterEach, vi } from "vitest";
@@ -7,6 +7,16 @@ import { FileManager } from "../src/features/terminal/FileManager";
 import { api, filesApi } from "../src/shared/api/client";
 
 afterEach(() => vi.restoreAllMocks());
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 test("renders remote path and file operations", async () => {
   vi.spyOn(filesApi, "list").mockResolvedValue({ path: "/", entries: [] });
@@ -151,6 +161,107 @@ test("reports download failures", async () => {
   await user.click(screen.getByRole("button", { name: "download" }));
 
   await waitFor(() => expect(error).toHaveBeenCalledWith("Download unavailable"));
+});
+
+test("ignores a stale successful path listing", async () => {
+  const first = deferred<{ path: string; entries: never[] }>();
+  const second = deferred<{
+    path: string;
+    entries: [
+      {
+        name: string;
+        path: string;
+        type: "file";
+        size: number;
+        modified_at: null;
+        permissions: string;
+      }
+    ];
+  }>();
+  vi.spyOn(filesApi, "list")
+    .mockResolvedValueOnce({ path: "/", entries: [] })
+    .mockReturnValueOnce(first.promise)
+    .mockReturnValueOnce(second.promise);
+  const user = userEvent.setup();
+
+  render(
+    <App>
+      <FileManager hostId="host-1" />
+    </App>
+  );
+
+  const pathInput = await screen.findByRole("textbox", { name: "Remote path" });
+  await user.clear(pathInput);
+  await user.type(pathInput, "/a");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(filesApi.list).toHaveBeenCalledWith("host-1", "/a"));
+  await user.clear(pathInput);
+  await user.type(pathInput, "/b");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(filesApi.list).toHaveBeenCalledWith("host-1", "/b"));
+
+  await act(async () => {
+    second.resolve({
+      path: "/b",
+      entries: [
+        {
+          name: "latest.txt",
+          path: "/b/latest.txt",
+          type: "file",
+          size: 1,
+          modified_at: null,
+          permissions: "-rw-r--r--"
+        }
+      ]
+    });
+    await second.promise;
+  });
+  await screen.findByText("latest.txt");
+  await act(async () => {
+    first.resolve({ path: "/a", entries: [] });
+    await first.promise;
+  });
+
+  expect(pathInput).toHaveValue("/b");
+  expect(screen.queryByText("latest.txt")).toBeInTheDocument();
+});
+
+test("does not roll back a newer path when a stale listing fails", async () => {
+  const first = deferred<{ path: string; entries: never[] }>();
+  const second = deferred<{ path: string; entries: never[] }>();
+  vi.spyOn(filesApi, "list")
+    .mockResolvedValueOnce({ path: "/", entries: [] })
+    .mockReturnValueOnce(first.promise)
+    .mockReturnValueOnce(second.promise);
+  const user = userEvent.setup();
+
+  render(
+    <App>
+      <FileManager hostId="host-1" />
+    </App>
+  );
+
+  const pathInput = await screen.findByRole("textbox", { name: "Remote path" });
+  await user.clear(pathInput);
+  await user.type(pathInput, "/a");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(filesApi.list).toHaveBeenCalledWith("host-1", "/a"));
+  await user.clear(pathInput);
+  await user.type(pathInput, "/b");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(filesApi.list).toHaveBeenCalledWith("host-1", "/b"));
+
+  await act(async () => {
+    second.resolve({ path: "/b", entries: [] });
+    await second.promise;
+  });
+  expect(pathInput).toHaveValue("/b");
+  await act(async () => {
+    first.reject(new Error("Path unavailable"));
+    await first.promise.catch(() => undefined);
+  });
+
+  expect(pathInput).toHaveValue("/b");
 });
 
 test("uses the scoped app modal for deletion confirmation", async () => {

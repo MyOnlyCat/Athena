@@ -21,20 +21,24 @@ export function FileManager({ hostId }: { hostId: string }) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const uploadRef = useRef<HTMLInputElement>(null);
+  const listRequestIdRef = useRef(0);
 
   async function load(nextPath = path) {
     if (!hostId) return;
+    const requestId = ++listRequestIdRef.current;
     setLoading(true);
     try {
       const result = await filesApi.list(hostId, nextPath);
+      if (requestId !== listRequestIdRef.current) return;
       setPath(result.path);
       setPathDraft(result.path);
       setEntries(result.entries);
     } catch (error) {
+      if (requestId !== listRequestIdRef.current) return;
       setPathDraft(path);
       message.error(apiMessage(error));
     } finally {
-      setLoading(false);
+      if (requestId === listRequestIdRef.current) setLoading(false);
     }
   }
 
