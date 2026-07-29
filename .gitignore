@@ -1,0 +1,16 @@
+.env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+api/.venv/
+api/data/
+ui/node_modules/
+ui/dist/
+coverage/
+.worktrees/
+
