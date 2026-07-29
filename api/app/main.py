@@ -1,6 +1,6 @@
-import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -12,6 +12,7 @@ from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.files import router as files_router
 from app.api.v1.hosts import router as hosts_router
+from app.api.v1.master_settings import router as master_settings_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.terminal import router as terminal_router
 from app.api.v1.users import router as users_router
@@ -25,10 +26,10 @@ from app.services.artifacts import ArtifactService
 from app.services.auth import AuthService, LoginThrottle
 from app.services.crypto import CredentialCipher
 from app.services.deployment_gateway import AsyncDeploymentGateway
-from app.services.executor import DeploymentExecutor
 from app.services.files import AsyncRemoteFiles
 from app.services.inventory_sync import InventorySynchronizer
-from app.services.master_client import MasterClient
+from app.services.master_runtime import MasterRuntime
+from app.services.master_settings import MasterSettingsService
 from app.services.ssh import AsyncSSHClient
 from app.services.terminal import AsyncTerminalGateway, TerminalTicketStore
 
@@ -42,22 +43,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine = create_engine(active_settings)
         app.state.db_engine = engine
         app.state.session_factory = create_session_factory(engine)
-        master_client = None
-        if active_settings.master_node_url and active_settings.node_token:
-            master_client = MasterClient(
-                active_settings.master_node_url,
-                active_settings.node_id,
-                active_settings.node_token,
-            )
-        app.state.inventory_sync = InventorySynchronizer(
-            active_settings,
-            app.state.session_factory,
-            master_client,
-        )
         artifact_http = httpx.AsyncClient(timeout=None)
-        app.state.deployment_executor = DeploymentExecutor(
+
+        def publish_runtime(inventory: Any | None, executor: Any | None) -> None:
+            app.state.inventory_sync = inventory or InventorySynchronizer(
+                active_settings,
+                app.state.session_factory,
+            )
+            app.state.deployment_executor = executor
+
+        master_runtime = MasterRuntime(
+            settings=active_settings,
             session_factory=app.state.session_factory,
-            master_client=master_client,
             artifact_service=ArtifactService(
                 artifact_http,
                 active_settings.data_dir / "artifacts",
@@ -65,40 +62,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             gateway=AsyncDeploymentGateway(),
             cipher=CredentialCipher(active_settings.credential_key),
-            concurrency=active_settings.deploy_concurrency,
+            start_worker=active_settings.environment != "test",
+            on_change=publish_runtime,
         )
-        async with engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
-        if active_settings.bootstrap_username and active_settings.bootstrap_password:
-            async with app.state.session_factory() as session:
-                auth = AuthService(session, active_settings)
-                existing = await auth.users.get_by_normalized_username(
-                    active_settings.bootstrap_username
-                )
-                if existing is None:
-                    await auth.users.create(
-                        UserCreate(
-                            username=active_settings.bootstrap_username,
-                            password=active_settings.bootstrap_password,
-                        )
+        app.state.master_runtime = master_runtime
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            if active_settings.bootstrap_username and active_settings.bootstrap_password:
+                async with app.state.session_factory() as session:
+                    auth = AuthService(session, active_settings)
+                    existing = await auth.users.get_by_normalized_username(
+                        active_settings.bootstrap_username
                     )
-        stop = asyncio.Event()
-        worker = None
-        if master_client is not None and active_settings.environment != "test":
-            await app.state.deployment_executor.recover()
-            worker = asyncio.create_task(
-                app.state.inventory_sync.run(stop, app.state.deployment_executor.poll)
-            )
-        yield
-        stop.set()
-        app.state.inventory_sync.notify_change()
-        if worker is not None:
-            await worker
-        if master_client is not None:
-            await master_client.close()
-        await app.state.deployment_executor.close()
-        await artifact_http.aclose()
-        await engine.dispose()
+                    if existing is None:
+                        await auth.users.create(
+                            UserCreate(
+                                username=active_settings.bootstrap_username,
+                                password=active_settings.bootstrap_password,
+                            )
+                        )
+            async with app.state.session_factory() as session:
+                config = await MasterSettingsService(
+                    session,
+                    active_settings,
+                    CredentialCipher(active_settings.credential_key),
+                ).get_effective()
+            await master_runtime.apply(config)
+            yield
+        finally:
+            await master_runtime.stop()
+            await artifact_http.aclose()
+            await engine.dispose()
 
     app = FastAPI(
         title="Athena Node API",
@@ -118,6 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(audit_router, prefix="/api/v1")
     app.include_router(files_router, prefix="/api/v1")
     app.include_router(hosts_router, prefix="/api/v1")
+    app.include_router(master_settings_router, prefix="/api/v1")
     app.include_router(terminal_router, prefix="/api/v1")
     app.include_router(tasks_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")

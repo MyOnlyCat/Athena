@@ -59,6 +59,24 @@ class MasterClient:
             return {}
         return dict(response.json())
 
+    async def test_connection(
+        self,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self.heartbeat(
+            payload
+            or {
+                "node": {
+                    "id": self.node_id,
+                    "name": self.node_id,
+                    "version": "unknown",
+                    "hostname": self.node_id,
+                    "reported_at": "connection-test",
+                },
+                "hosts": [],
+            }
+        )
+
     async def heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._post("/api/node/v1/nodes/heartbeat", payload)
 
@@ -78,4 +96,3 @@ class MasterClient:
             f"/api/node/v1/tasks/{task_id}/events",
             {"events": events},
         )
-
