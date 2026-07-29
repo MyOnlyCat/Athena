@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { App, ConfigProvider } from "antd";
+import { App } from "antd";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
@@ -7,7 +7,7 @@ import { BrowserRouter } from "react-router-dom";
 import { AppRouter } from "./app/AppRouter";
 import { AuthProvider } from "./features/auth/AuthContext";
 import "./styles/global.css";
-import { theme } from "./styles/theme";
+import { ThemeProvider } from "./styles/ThemeProvider";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,7 +17,7 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ConfigProvider theme={theme}>
+    <ThemeProvider>
       <App>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
@@ -27,6 +27,6 @@ createRoot(document.getElementById("root")!).render(
           </AuthProvider>
         </QueryClientProvider>
       </App>
-    </ConfigProvider>
+    </ThemeProvider>
   </StrictMode>
 );

@@ -1,39 +1,27 @@
-import type { ThemeConfig } from "antd";
+import { theme as antdTheme, type ThemeConfig } from "antd";
 
-export const theme: ThemeConfig = {
-  algorithm: undefined,
-  token: {
-    colorPrimary: "#5B8CFF",
-    colorSuccess: "#2DD4A8",
-    colorWarning: "#F6C85F",
-    colorError: "#FF6B7A",
-    colorBgBase: "#0B1020",
-    colorBgContainer: "#121A2B",
-    colorBorder: "#24324A",
-    colorText: "#E8EEF8",
-    colorTextSecondary: "#93A4BD",
-    borderRadius: 8,
-    controlHeight: 36,
-    fontFamily:
-      '"Inter", "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif'
-  },
-  components: {
-    Layout: {
-      bodyBg: "#0B1020",
-      headerBg: "rgba(11, 16, 32, .84)",
-      siderBg: "#0E1525"
-    },
-    Menu: {
-      darkItemBg: "#0E1525",
-      itemBg: "#0E1525",
-      itemSelectedBg: "rgba(91, 140, 255, .16)",
-      itemSelectedColor: "#8EAEFF",
-      itemColor: "#93A4BD"
-    },
-    Table: {
-      headerBg: "#0F1728",
-      rowHoverBg: "#172238",
-      borderColor: "#24324A"
+export type ThemeMode = "light" | "dark";
+export const THEME_STORAGE_KEY = "athena_theme";
+
+export function createTheme(mode: ThemeMode): ThemeConfig {
+  const dark = mode === "dark";
+  return {
+    algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+    token: {
+      colorPrimary: "#5B8CFF",
+      colorSuccess: "#1FA980",
+      colorWarning: "#D99A16",
+      colorError: dark ? "#FF7A88" : "#D9363E",
+      colorBgBase: dark ? "#0B1020" : "#F4F7FB",
+      colorBgContainer: dark ? "#121A2B" : "#FFFFFF",
+      colorBorder: dark ? "#31415D" : "#CBD5E1",
+      colorText: dark ? "#F3F6FB" : "#172033",
+      colorTextSecondary: dark ? "#B4C0D2" : "#526078",
+      colorTextPlaceholder: dark ? "#8796AC" : "#66758C",
+      borderRadius: 8,
+      controlHeight: 36,
+      fontFamily:
+        '"Inter", "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif'
     }
-  }
-};
+  };
+}
