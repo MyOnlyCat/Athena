@@ -24,23 +24,26 @@ export function FileManager({ hostId }: { hostId: string }) {
   const [loading, setLoading] = useState(false);
   const uploadRef = useRef<HTMLInputElement>(null);
   const listRequestIdRef = useRef(0);
+  const mountedRef = useRef(true);
 
   async function load(nextPath = path) {
-    if (!hostId) return;
+    if (!hostId || !mountedRef.current) return;
     const requestId = ++listRequestIdRef.current;
     setLoading(true);
     try {
       const result = await filesApi.list(hostId, nextPath);
-      if (requestId !== listRequestIdRef.current) return;
+      if (!mountedRef.current || requestId !== listRequestIdRef.current) return;
       setPath(result.path);
       setPathDraft(result.path);
       setEntries(result.entries);
     } catch (error) {
-      if (requestId !== listRequestIdRef.current) return;
+      if (!mountedRef.current || requestId !== listRequestIdRef.current) return;
       setPathDraft(path);
       message.error(apiMessage(error));
     } finally {
-      if (requestId === listRequestIdRef.current) setLoading(false);
+      if (mountedRef.current && requestId === listRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -49,7 +52,12 @@ export function FileManager({ hostId }: { hostId: string }) {
   });
 
   useEffect(() => {
+    mountedRef.current = true;
     void load("/");
+    return () => {
+      mountedRef.current = false;
+      listRequestIdRef.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hostId]);
 

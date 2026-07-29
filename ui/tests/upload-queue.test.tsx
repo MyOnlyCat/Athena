@@ -258,3 +258,35 @@ test("file selection snapshots the committed directory, accepts multiple files, 
   });
   await waitFor(() => expect(filesApi.list).toHaveBeenCalledTimes(4));
 });
+
+test("invalidates a successful upload refresh when the host changes before listing settles", async () => {
+  const refresh = deferred<{ path: string; entries: never[] }>();
+  vi.spyOn(filesApi, "list")
+    .mockResolvedValueOnce({ path: "/releases", entries: [] })
+    .mockReturnValueOnce(refresh.promise);
+  vi.spyOn(filesApi, "upload").mockResolvedValue({} as never);
+  const user = userEvent.setup();
+  const { container, rerender } = render(
+    <App>
+      <FileManager hostId="host-1" />
+    </App>
+  );
+
+  const pathInput = await screen.findByRole("textbox", { name: "Remote path" });
+  await waitFor(() => expect(pathInput).toHaveValue("/releases"));
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+  await user.upload(input!, file("release.bin"));
+  await waitFor(() => expect(filesApi.list).toHaveBeenCalledTimes(2));
+
+  rerender(
+    <App>
+      <FileManager hostId="" />
+    </App>
+  );
+  await act(async () => {
+    refresh.resolve({ path: "/stale-host", entries: [] });
+    await refresh.promise;
+  });
+
+  expect(pathInput).toHaveValue("/releases");
+});
