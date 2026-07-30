@@ -18,3 +18,4 @@
 coverage/
 .worktrees/
 preview-*.log
+reset-api*.log
