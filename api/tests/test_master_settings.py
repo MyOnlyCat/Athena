@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+import threading
 from collections.abc import Iterator
 from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import ThreadPoolExecutor
@@ -30,7 +31,7 @@ def auth_headers(client: TestClient) -> dict[str, str]:
 
 class FakeMasterRuntime:
     def __init__(self) -> None:
-        self.status = "running"
+        self.status = "online"
         self.tested: list[Any] = []
         self.applied: list[Any] = []
         self.test_error: AppError | None = None
@@ -127,7 +128,7 @@ def test_get_uses_environment_defaults_and_redacts_token(settings: Settings) -> 
         "host": "master.example.com",
         "port": 9443,
         "has_token": True,
-        "runtime_status": "running",
+        "runtime_status": "online",
     }
     assert "environment-secret" not in response.text
     assert "token" not in response.text.replace("has_token", "")
@@ -677,6 +678,7 @@ class FakeInventory:
     def __init__(self, client: FakeRuntimeClient, tracker: RuntimeTracker) -> None:
         self.client = client
         self.tracker = tracker
+        self.status = "connecting"
 
     def notify_change(self) -> None:
         self.tracker.events.append(f"notify:{self.client.token}")
@@ -835,6 +837,109 @@ class CommitAndRollbackFailingSession:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_real_sqlite_commit_keeps_database_runtime_and_token_aligned(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aiosqlite
+
+    from app.api.v1.master_settings import update_master_settings
+    from app.schemas.master_setting import MasterSettingInput
+    from app.services.master_settings import MasterSettingsService
+
+    tracker = RuntimeTracker()
+    engine, session_factory, runtime, request, _ = (
+        await route_runtime_with_old_settings(settings, tracker)
+    )
+    commit_started = threading.Event()
+    commit_release = threading.Event()
+    original_execute = aiosqlite.Connection._execute
+    gated_commit = False
+
+    async def gated_execute(
+        connection: aiosqlite.Connection,
+        function: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        nonlocal gated_commit
+        if not gated_commit and getattr(function, "__name__", "") == "commit":
+            gated_commit = True
+
+            def commit_after_release() -> Any:
+                commit_started.set()
+                if not commit_release.wait(timeout=5):
+                    raise TimeoutError("test did not release SQLite commit")
+                return function(*args, **kwargs)
+
+            return await original_execute(connection, commit_after_release)
+        return await original_execute(connection, function, *args, **kwargs)
+
+    monkeypatch.setattr(aiosqlite.Connection, "_execute", gated_execute)
+    update = MasterSettingInput(
+        scheme="http",
+        host="committed.example.com",
+        port=8080,
+        token="committed-token",
+    )
+
+    try:
+        async with session_factory() as session:
+            update_task = asyncio.create_task(
+                update_master_settings(
+                    update,
+                    request,
+                    session,
+                    None,  # type: ignore[arg-type]
+                )
+            )
+            assert await asyncio.to_thread(commit_started.wait, 5)
+            update_task.cancel()
+            commit_release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await update_task
+
+        async with session_factory() as session:
+            saved = await MasterSettingsService(
+                session,
+                settings,
+                CredentialCipher(settings.credential_key),
+            ).get_effective()
+
+        assert saved.host == "committed.example.com"
+        assert saved.token == "committed-token"
+        assert runtime._active is not None
+        assert runtime._active.config.host == saved.host
+        assert runtime._active.config.token == saved.token
+        assert tracker.active_workers == 1
+    finally:
+        commit_release.set()
+        await runtime.stop()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_reports_unconfigured_connecting_and_stopped(
+    settings: Settings,
+) -> None:
+    from app.services.master_settings import MasterConfig
+
+    tracker = RuntimeTracker()
+    runtime = runtime_with_fakes(settings, tracker)
+
+    await runtime.apply(MasterConfig("https", "", 443, ""))
+    assert runtime.status == "unconfigured"
+
+    await runtime.apply(
+        MasterConfig("https", "master.example.com", 443, "secret")
+    )
+    assert runtime.status == "connecting"
+
+    await runtime.stop()
+    assert runtime.status == "stopped"
+
+
+@pytest.mark.asyncio
 async def test_put_activates_committed_candidate_when_old_closers_fail(
     settings: Settings,
 ) -> None:
@@ -881,7 +986,7 @@ async def test_put_activates_committed_candidate_when_old_closers_fail(
         assert tracker.events.count("client-close:old") == 1
         assert tracker.active_workers == 1
         assert tracker.maximum_workers == 1
-        assert runtime.status == "running"
+        assert runtime.status == "connecting"
 
         await runtime.stop()
 
@@ -954,7 +1059,7 @@ async def test_failed_rollback_still_discards_prepared_candidate(
         assert tracker.events.count("client-close:candidate") == 1
         assert "worker-stop:old" not in tracker.events
         assert tracker.active_workers == 1
-        assert runtime.status == "running"
+        assert runtime.status == "connecting"
 
         async with session_factory() as query_session:
             saved = await MasterSettingsService(
@@ -994,7 +1099,7 @@ async def test_runtime_replacement_stops_old_resources_before_one_new_loop(
     assert tracker.events.index("client-close:old") < tracker.events.index("worker-start:new")
     assert tracker.active_workers == 1
     assert tracker.maximum_workers == 1
-    assert runtime.status == "running"
+    assert runtime.status == "connecting"
 
     await runtime.stop()
 
@@ -1051,7 +1156,7 @@ async def test_candidate_recovery_failure_keeps_old_runtime_running(
     assert tracker.events.count("client-close:candidate") == 1
     assert tracker.active_workers == 1
     assert tracker.maximum_workers == 1
-    assert runtime.status == "running"
+    assert runtime.status == "connecting"
 
     await runtime.stop()
 
@@ -1207,7 +1312,7 @@ async def test_cancelled_activation_completes_atomic_swap_with_one_worker(
         assert tracker.events.count("worker-start:candidate") == 1
         assert tracker.active_workers == 1
         assert tracker.maximum_workers == 1
-        assert runtime.status == "running"
+        assert runtime.status == "connecting"
     finally:
         tracker.executor_close_release.set()
         await runtime.discard(candidate)

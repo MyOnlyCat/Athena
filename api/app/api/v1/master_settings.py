@@ -1,8 +1,13 @@
+import asyncio
+from collections.abc import Coroutine
+from typing import Any
+
 from fastapi import APIRouter, Request
 
 from app.api.deps import CurrentUserDep, SessionDep
 from app.schemas.master_setting import (
     MasterConnectionTestResponse,
+    MasterRuntimeStatus,
     MasterSettingInput,
     MasterSettingResponse,
 )
@@ -20,7 +25,10 @@ def service(request: Request, session: SessionDep) -> MasterSettingsService:
     )
 
 
-def response(config: MasterConfig, runtime_status: str) -> MasterSettingResponse:
+def response(
+    config: MasterConfig,
+    runtime_status: MasterRuntimeStatus,
+) -> MasterSettingResponse:
     return MasterSettingResponse(
         scheme=config.scheme,
         host=config.host,
@@ -28,6 +36,31 @@ def response(config: MasterConfig, runtime_status: str) -> MasterSettingResponse
         has_token=bool(config.token),
         runtime_status=runtime_status,
     )
+
+
+async def _finish_owned(
+    operation: Coroutine[Any, Any, None],
+    *,
+    name: str,
+) -> asyncio.CancelledError | None:
+    task = asyncio.create_task(operation, name=name)
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+    task.result()
+    return cancellation
+
+
+async def _commit_and_activate(
+    session: SessionDep,
+    runtime: Any,
+    candidate: Any,
+) -> None:
+    await session.commit()
+    await runtime.activate(candidate)
 
 
 @router.get("", response_model=MasterSettingResponse)
@@ -69,9 +102,13 @@ async def update_master_settings(
         config = await settings_service.resolve(data)
         await runtime.test(config)
         candidate = await runtime.prepare(config)
+        cancellation: asyncio.CancelledError | None = None
         try:
             await settings_service.save(data, config)
-            await session.commit()
+            cancellation = await _finish_owned(
+                _commit_and_activate(session, runtime, candidate),
+                name="master-settings-commit-and-activate",
+            )
         except BaseException as exc:
             try:
                 await session.rollback()
@@ -83,5 +120,6 @@ async def update_master_settings(
                 except BaseException as discard_error:
                     exc.add_note(f"candidate discard failed: {discard_error!r}")
             raise
-        await runtime.activate(candidate)
+        if cancellation is not None:
+            raise cancellation
         return response(config, runtime.status)

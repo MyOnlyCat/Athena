@@ -1,11 +1,14 @@
 import asyncio
 from base64 import b64encode
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
+import asyncssh
 import pytest
 from fastapi import WebSocketDisconnect
 
-from app.services.terminal import AsyncTerminal, bridge_terminal
+from app.services.ssh import HostConnection
+from app.services.terminal import AsyncTerminal, AsyncTerminalGateway, bridge_terminal
 
 
 def auth_headers(client) -> dict[str, str]:
@@ -237,3 +240,193 @@ async def test_terminal_bridge_prioritizes_non_disconnect_failure():
         {"type": "error", "code": "TERMINAL_BRIDGE_ERROR"}
     ]
     assert terminal.close_calls == 1
+
+
+class RejectingTerminalGateway:
+    def __init__(
+        self,
+        error: Exception | None = None,
+    ) -> None:
+        self.connection: HostConnection | None = None
+        self.error = error or asyncssh.HostKeyNotVerifiable(
+            "Host key is not trusted"
+        )
+
+    async def open(
+        self,
+        connection: HostConnection,
+        cols: int,
+        rows: int,
+    ) -> None:
+        del cols, rows
+        self.connection = connection
+        raise self.error
+
+
+def test_terminal_websocket_reports_changed_host_key_and_passes_saved_pin(client):
+    headers = auth_headers(client)
+    host = create_trusted_host(client, headers)
+    ticket = client.post(
+        "/api/v1/terminal/tickets",
+        headers=headers,
+        json={"host_id": host["id"]},
+    ).json()["ticket"]
+    gateway = RejectingTerminalGateway()
+    client.app.state.terminal_gateway = gateway
+
+    with client.websocket_connect(f"/api/v1/terminal/ws/{host['id']}") as websocket:
+        websocket.send_json({"ticket": ticket, "cols": 120, "rows": 36})
+        assert websocket.receive_json() == {
+            "type": "error",
+            "code": "TERMINAL_HOST_KEY_CHANGED",
+        }
+
+    assert gateway.connection is not None
+    assert gateway.connection.host_key_fingerprint == "SHA256:trusted"
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (asyncssh.PermissionDenied("password rejected"), "TERMINAL_AUTH_FAILED"),
+        (OSError("network unreachable"), "TERMINAL_NETWORK_ERROR"),
+        (asyncssh.ChannelOpenError(1, "session refused"), "TERMINAL_CHANNEL_ERROR"),
+        (RuntimeError("unexpected open failure"), "TERMINAL_OPEN_ERROR"),
+    ],
+)
+def test_terminal_websocket_reports_stable_open_error_codes(
+    client,
+    error: Exception,
+    code: str,
+) -> None:
+    headers = auth_headers(client)
+    host = create_trusted_host(client, headers)
+    ticket = client.post(
+        "/api/v1/terminal/tickets",
+        headers=headers,
+        json={"host_id": host["id"]},
+    ).json()["ticket"]
+    client.app.state.terminal_gateway = RejectingTerminalGateway(error)
+
+    with client.websocket_connect(f"/api/v1/terminal/ws/{host['id']}") as websocket:
+        websocket.send_json({"ticket": ticket, "cols": 120, "rows": 36})
+        assert websocket.receive_json() == {"type": "error", "code": code}
+
+
+class ClassifiedFailingTerminal(FailingTerminal):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    async def read(self) -> bytes:
+        raise self.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (asyncssh.ChannelOpenError(1, "channel lost"), "TERMINAL_CHANNEL_ERROR"),
+        (asyncssh.ConnectionLost("connection lost"), "TERMINAL_NETWORK_ERROR"),
+    ],
+)
+async def test_terminal_bridge_classifies_channel_and_network_failures(
+    error: Exception,
+    code: str,
+) -> None:
+    websocket = WaitingWebSocket()
+    terminal = ClassifiedFailingTerminal(error)
+
+    await bridge_terminal(websocket, terminal)
+
+    assert websocket.sent == [{"type": "error", "code": code}]
+    assert terminal.close_calls == 1
+
+
+class FailingProcessConnection:
+    def __init__(self) -> None:
+        self.close_calls = 0
+        self.wait_calls = 0
+
+    async def create_process(self, **kwargs: Any) -> None:
+        del kwargs
+        raise asyncssh.ChannelOpenError(1, "session refused")
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+    async def wait_closed(self) -> None:
+        self.wait_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_open_closes_ssh_when_process_creation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ssh = FailingProcessConnection()
+
+    async def connect(*args: Any, **kwargs: Any) -> FailingProcessConnection:
+        del args, kwargs
+        return ssh
+
+    import app.services.terminal as terminal_module
+
+    monkeypatch.setattr(terminal_module.asyncssh, "connect", connect)
+    monkeypatch.setattr(terminal_module, "connect_ssh", connect, raising=False)
+
+    with pytest.raises(asyncssh.ChannelOpenError):
+        await AsyncTerminalGateway().open(
+            HostConnection(
+                "node.example.com",
+                22,
+                "root",
+                "secret",
+                host_key_fingerprint="SHA256:trusted",
+            ),
+            120,
+            36,
+        )
+
+    assert ssh.close_calls == 1
+    assert ssh.wait_calls == 1
+
+
+class FailingCloseStdin:
+    def __init__(self) -> None:
+        self.eof_calls = 0
+
+    def write_eof(self) -> None:
+        self.eof_calls += 1
+        raise RuntimeError("stdin EOF failed")
+
+
+class FailingCloseProcess:
+    def __init__(self) -> None:
+        self.stdin = FailingCloseStdin()
+
+
+class IndependentlyFailingConnection:
+    def __init__(self) -> None:
+        self.close_calls = 0
+        self.wait_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+        raise RuntimeError("connection close failed")
+
+    async def wait_closed(self) -> None:
+        self.wait_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_close_attempts_every_cleanup_step_after_earlier_failures():
+    process = FailingCloseProcess()
+    connection = IndependentlyFailingConnection()
+    terminal = AsyncTerminal(connection, process)
+
+    with pytest.raises(BaseExceptionGroup):
+        await terminal.close()
+
+    assert process.stdin.eof_calls == 1
+    assert connection.close_calls == 1
+    assert connection.wait_calls == 1

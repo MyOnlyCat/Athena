@@ -1,3 +1,10 @@
+import asyncio
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
 from app.services.inventory_sync import build_inventory
 
 
@@ -44,3 +51,88 @@ def test_inventory_change_wakes_background_sync():
     synchronizer.notify_change()
 
     assert synchronizer.changed.is_set() is True
+
+
+class EmptyScalars:
+    def all(self) -> list[Any]:
+        return []
+
+
+class EmptySession:
+    async def scalars(self, query: Any) -> EmptyScalars:
+        del query
+        return EmptyScalars()
+
+
+@asynccontextmanager
+async def empty_session_factory():
+    yield EmptySession()
+
+
+class HeartbeatClient:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.calls = 0
+
+    async def heartbeat(self, payload: dict[str, Any]) -> None:
+        assert payload["node"]["id"] == "node-1"
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+
+
+def synchronizer(client: HeartbeatClient):
+    from app.services.inventory_sync import InventorySynchronizer
+
+    settings = SimpleNamespace(
+        node_id="node-1",
+        node_name="Shanghai child",
+        node_version="0.1.0",
+    )
+    return InventorySynchronizer(settings, empty_session_factory, client)
+
+
+@pytest.mark.asyncio
+async def test_successful_heartbeat_and_poll_report_online() -> None:
+    client = HeartbeatClient()
+    sync = synchronizer(client)
+    stop = asyncio.Event()
+
+    async def successful_poll() -> None:
+        stop.set()
+        sync.notify_change()
+
+    assert sync.status == "connecting"
+    await sync.run(stop, successful_poll)
+
+    assert client.calls == 1
+    assert sync.status == "online"
+    assert sync.last_success_at is not None
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_connection_failure_reports_error() -> None:
+    client = HeartbeatClient(OSError("master unreachable"))
+    sync = synchronizer(client)
+
+    with pytest.raises(OSError, match="master unreachable"):
+        await sync.sync_now()
+
+    assert sync.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_poll_failure_after_heartbeat_reports_error() -> None:
+    client = HeartbeatClient()
+    sync = synchronizer(client)
+    stop = asyncio.Event()
+
+    async def failing_poll() -> None:
+        stop.set()
+        sync.notify_change()
+        raise OSError("claim failed")
+
+    await sync.run(stop, failing_poll)
+
+    assert client.calls == 1
+    assert sync.status == "error"

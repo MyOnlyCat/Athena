@@ -6,6 +6,7 @@ from typing import Any, TypeVar
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.schemas.master_setting import MasterRuntimeStatus
 from app.services.crypto import CredentialCipher
 from app.services.executor import DeploymentExecutor
 from app.services.inventory_sync import InventorySynchronizer, build_inventory
@@ -65,15 +66,20 @@ class MasterRuntime:
         self._retired: list[RuntimeSlot] = []
 
     @property
-    def status(self) -> str:
+    def status(self) -> MasterRuntimeStatus:
         slot = self._active
         if slot is None:
             return "stopped"
-        if slot.worker is not None and not slot.worker.done():
-            return "running"
-        if slot.client is not None:
-            return "configured"
-        return "stopped"
+        if not slot.config.host or not slot.config.token:
+            return "unconfigured"
+        if slot.worker is not None and slot.worker.done():
+            return "error"
+        inventory_status = getattr(slot.inventory, "status", None)
+        if inventory_status == "online":
+            return "online"
+        if inventory_status == "error":
+            return "error"
+        return "connecting"
 
     @asynccontextmanager
     async def reconfigure(self) -> AsyncIterator[None]:
@@ -170,11 +176,11 @@ class MasterRuntime:
             cleanup_errors.extend(await self._close_resources(previous))
             self._retain_retired(previous, cleanup_errors)
 
+        self._active = candidate
         if not candidate.has_resources:
             self._publish(None, None)
             return
 
-        self._active = candidate
         self._publish(candidate.inventory, candidate.executor)
         if candidate.activation_event is not None:
             candidate.activation_event.set()

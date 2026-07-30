@@ -58,8 +58,12 @@ API。
   `{"type":"error","code":"INVALID_TERMINAL_TICKET"}`，随后以 4401 关闭。
 - 主机不存在或尚未确认 SSH 指纹：以 4404 关闭。先在 `/hosts` 完成连接测试和
   指纹确认；未确认主机不会出现在终端服务器列表中。
-- 建立 SSH 后桥接失败：尽力发送
-  `{"type":"error","code":"TERMINAL_BRIDGE_ERROR"}`，然后清理连接。
+- SSH 认证失败、主机指纹变更、网络连接失败、通道打开失败会分别尽力发送
+  `TERMINAL_AUTH_FAILED`、`TERMINAL_HOST_KEY_CHANGED`、
+  `TERMINAL_NETWORK_ERROR`、`TERMINAL_CHANNEL_ERROR`；其他会话打开失败发送
+  `TERMINAL_OPEN_ERROR`。
+- 建立 SSH 后桥接失败会尽力发送对应的网络或通道错误；无法进一步分类时发送
+  `TERMINAL_BRIDGE_ERROR`，然后清理连接。
 - UI 长期显示 `connecting` 或很快变为 `closed`：检查主机在线状态、端口、账号
   密码、防火墙和已保存指纹；必要时在主机页重新运行连接测试。
 - 票据在 30 秒后失效，网络恢复后不会复用旧票据；重新选择主机或重新进入页面以

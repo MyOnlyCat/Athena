@@ -1,9 +1,19 @@
+from typing import Any
+
+import asyncssh
+import pytest
+
+from app.services.ssh import AsyncSSHClient, HostConnection
+
+
 class FakeSSHClient:
     def __init__(self) -> None:
         self.fingerprint = "SHA256:first"
         self.error_code: str | None = None
+        self.connections: list[HostConnection] = []
 
-    async def test_connection(self, connection):
+    async def test_connection(self, connection: HostConnection) -> dict[str, Any]:
+        self.connections.append(connection)
         if self.error_code:
             return {"status": "failed", "code": self.error_code, "message": "连接失败"}
         return {
@@ -101,3 +111,94 @@ def test_first_seen_fingerprint_requires_trust_and_changed_key_is_rejected(clien
     assert changed.status_code == 200
     assert changed.json()["code"] == "SSH_HOST_KEY_CHANGED"
     assert changed.json()["fingerprint"] == "SHA256:changed"
+    assert fake.connections[0].host_key_fingerprint is None
+    assert fake.connections[1].host_key_fingerprint == "SHA256:first"
+
+
+def test_editing_endpoint_clears_trust_but_metadata_edits_preserve_it(client):
+    headers = auth_headers(client)
+    host = create_host(client, headers, is_local=False).json()
+    trusted = client.post(
+        f"/api/v1/hosts/{host['id']}/trust-fingerprint",
+        headers=headers,
+        json={"fingerprint": "SHA256:trusted"},
+    ).json()
+
+    metadata = client.put(
+        f"/api/v1/hosts/{host['id']}",
+        headers=headers,
+        json={
+            "name": "renamed",
+            "address": trusted["address"],
+            "port": trusted["port"],
+            "username": "deploy",
+            "tags": ["staging"],
+            "is_local": False,
+        },
+    )
+    endpoint = client.put(
+        f"/api/v1/hosts/{host['id']}",
+        headers=headers,
+        json={
+            "name": "renamed",
+            "address": trusted["address"],
+            "port": 2222,
+            "username": "deploy",
+            "tags": ["staging"],
+            "is_local": False,
+        },
+    )
+
+    assert metadata.status_code == 200
+    assert metadata.json()["host_key_fingerprint"] == "SHA256:trusted"
+    assert endpoint.status_code == 200
+    assert endpoint.json()["host_key_fingerprint"] is None
+
+
+class FakeServerKey:
+    def __init__(self, fingerprint: str) -> None:
+        self.fingerprint = fingerprint
+
+    def get_fingerprint(self, algorithm: str) -> str:
+        assert algorithm == "sha256"
+        return self.fingerprint
+
+
+@pytest.mark.asyncio
+async def test_saved_connection_test_rejects_changed_key_in_asyncssh_handshake(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, Any] = {}
+
+    async def reject_changed_key(
+        host: str,
+        port: int,
+        **kwargs: Any,
+    ) -> Any:
+        del host, port
+        observed.update(kwargs)
+        validator = kwargs["client_factory"]()
+        accepted = validator.validate_host_public_key(
+            "node.example.com",
+            "192.0.2.10",
+            22,
+            FakeServerKey("SHA256:changed"),
+        )
+        assert accepted is False
+        raise asyncssh.HostKeyNotVerifiable("Host key is not trusted")
+
+    monkeypatch.setattr(asyncssh, "connect", reject_changed_key)
+    connection = HostConnection(
+        "node.example.com",
+        22,
+        "root",
+        "secret",
+        host_key_fingerprint="SHA256:trusted",
+    )
+
+    with pytest.raises(asyncssh.HostKeyNotVerifiable):
+        await AsyncSSHClient().test_connection(connection)
+
+    assert observed["known_hosts"]
+    assert observed["known_hosts"] is not None
+    assert callable(observed["client_factory"])

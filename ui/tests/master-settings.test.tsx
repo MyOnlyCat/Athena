@@ -8,6 +8,10 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { AppRouter } from "../src/app/AppRouter";
 import { MasterSettingsPage } from "../src/features/settings/MasterSettingsPage";
 import { masterSettingsApi } from "../src/shared/api/client";
+import type {
+  MasterRuntimeStatus,
+  MasterSettingResponse
+} from "../src/shared/api/types";
 import { ThemeProvider } from "../src/styles/ThemeProvider";
 
 vi.mock("../src/features/auth/AuthContext", () => ({
@@ -20,13 +24,21 @@ vi.mock("../src/features/auth/AuthContext", () => ({
 
 vi.mock("../src/features/terminal/TerminalPage", () => ({ TerminalPage: () => null }));
 
-const savedSettings = {
-  scheme: "https" as const,
+const savedSettings: MasterSettingResponse = {
+  scheme: "https",
   host: "master.example.com",
   port: 8443,
   has_token: true,
-  runtime_status: "running"
+  runtime_status: "online"
 };
+
+const runtimeStatuses: Array<[MasterRuntimeStatus, string]> = [
+  ["unconfigured", "未配置"],
+  ["connecting", "连接中"],
+  ["online", "在线"],
+  ["error", "异常"],
+  ["stopped", "已停止"]
+];
 
 function renderPage() {
   const client = new QueryClient({
@@ -67,9 +79,21 @@ test("loads saved connection details while keeping the Token field blank", async
   renderPage();
 
   expect(await screen.findByDisplayValue("master.example.com")).toBeInTheDocument();
-  expect(screen.getByDisplayValue("8443")).toBeInTheDocument();
+  expect(await screen.findByDisplayValue("8443")).toBeInTheDocument();
   expect(screen.getByLabelText("Token")).toHaveValue("");
   expect(screen.getByText("已保存")).toBeInTheDocument();
+  expect(screen.getByText("在线")).toBeInTheDocument();
+});
+
+test.each(runtimeStatuses)("renders the %s runtime status in Chinese", async (runtime_status, label) => {
+  vi.mocked(masterSettingsApi.get).mockResolvedValueOnce({
+    ...savedSettings,
+    runtime_status
+  });
+
+  renderPage();
+
+  expect(await screen.findByText(label)).toBeInTheDocument();
 });
 
 test("submits an empty Token when testing and saving a saved configuration", async () => {

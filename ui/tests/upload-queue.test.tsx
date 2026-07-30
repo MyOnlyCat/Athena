@@ -81,7 +81,39 @@ test("starts no more than three uploads, reports per-file progress, and continue
   expect(result.current.tasks.find((task) => task.file.name === "two.bin")?.status).toBe(
     "completed"
   );
-  expect(completed).toHaveBeenCalledTimes(1);
+  expect(completed).not.toHaveBeenCalled();
+});
+
+test("coalesces all successful completions in one enqueue batch into one refresh", async () => {
+  const uploads = [deferred<unknown>(), deferred<unknown>(), deferred<unknown>()];
+  vi.spyOn(filesApi, "upload")
+    .mockReturnValueOnce(uploads[0].promise as never)
+    .mockReturnValueOnce(uploads[1].promise as never)
+    .mockReturnValueOnce(uploads[2].promise as never);
+  const completed = vi.fn();
+  const { result } = renderHook(() => useUploadQueue("host-1", completed));
+
+  act(() => result.current.enqueue(
+    [file("one.bin"), file("two.bin"), file("three.bin")],
+    "/releases"
+  ));
+  await waitFor(() => expect(filesApi.upload).toHaveBeenCalledTimes(3));
+
+  await act(async () => {
+    uploads[0].resolve({});
+    await uploads[0].promise;
+  });
+  await act(async () => {
+    uploads[1].resolve({});
+    await uploads[1].promise;
+  });
+  expect(completed).not.toHaveBeenCalled();
+
+  await act(async () => {
+    uploads[2].resolve({});
+    await uploads[2].promise;
+  });
+  await waitFor(() => expect(completed).toHaveBeenCalledTimes(1));
 });
 
 test("cancels one active upload and all queued work independently", async () => {
@@ -256,7 +288,58 @@ test("file selection snapshots the committed directory, accepts multiple files, 
     uploadTwo.resolve({});
     await Promise.all([uploadOne.promise, uploadTwo.promise]);
   });
-  await waitFor(() => expect(filesApi.list).toHaveBeenCalledTimes(4));
+  await waitFor(() => expect(filesApi.list).toHaveBeenCalledTimes(3));
+  expect(filesApi.list).toHaveBeenLastCalledWith("host-1", "/other");
+});
+
+test("defers an upload refresh until pending navigation commits and refreshes that directory", async () => {
+  const navigation = deferred<{ path: string; entries: never[] }>();
+  const refresh = deferred<{ path: string; entries: never[] }>();
+  vi.spyOn(filesApi, "list")
+    .mockResolvedValueOnce({ path: "/releases", entries: [] })
+    .mockReturnValueOnce(navigation.promise)
+    .mockReturnValueOnce(refresh.promise);
+  const upload = deferred<unknown>();
+  vi.spyOn(filesApi, "upload").mockReturnValue(upload.promise as never);
+  const user = userEvent.setup();
+  const { container } = render(
+    <App>
+      <FileManager hostId="host-1" />
+    </App>
+  );
+
+  const pathInput = await screen.findByRole("textbox", { name: "Remote path" });
+  await waitFor(() => expect(pathInput).toHaveValue("/releases"));
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+  await user.upload(input!, file("release.bin"));
+  await waitFor(() => expect(filesApi.upload).toHaveBeenCalledTimes(1));
+
+  await user.clear(pathInput);
+  await user.type(pathInput, "/var/log");
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(filesApi.list).toHaveBeenNthCalledWith(2, "host-1", "/var/log")
+  );
+
+  await act(async () => {
+    upload.resolve({});
+    await upload.promise;
+  });
+  expect(filesApi.list).toHaveBeenCalledTimes(2);
+
+  await act(async () => {
+    navigation.resolve({ path: "/var/log", entries: [] });
+    await navigation.promise;
+  });
+  await waitFor(() =>
+    expect(filesApi.list).toHaveBeenNthCalledWith(3, "host-1", "/var/log")
+  );
+  await act(async () => {
+    refresh.resolve({ path: "/var/log", entries: [] });
+    await refresh.promise;
+  });
+
+  expect(pathInput).toHaveValue("/var/log");
 });
 
 test("invalidates a successful upload refresh when the host changes before listing settles", async () => {

@@ -6,7 +6,7 @@ from app.models.host import Host
 from app.schemas.terminal import TerminalTicketRequest, TerminalTicketResponse
 from app.services.crypto import CredentialCipher
 from app.services.ssh import HostConnection
-from app.services.terminal import bridge_terminal
+from app.services.terminal import bridge_terminal, terminal_open_error_code
 
 router = APIRouter(prefix="/terminal", tags=["terminal"])
 
@@ -51,11 +51,23 @@ async def terminal_websocket(websocket: WebSocket, host_id: str) -> None:
             password = CredentialCipher(
                 websocket.app.state.settings.credential_key
             ).decrypt(host.encrypted_password)
-            terminal = await websocket.app.state.terminal_gateway.open(
-                HostConnection(host.address, host.port, host.username, password),
-                int(first.get("cols", 120)),
-                int(first.get("rows", 36)),
-            )
+            try:
+                terminal = await websocket.app.state.terminal_gateway.open(
+                    HostConnection(
+                        host.address,
+                        host.port,
+                        host.username,
+                        password,
+                        host.host_key_fingerprint,
+                    ),
+                    int(first.get("cols", 120)),
+                    int(first.get("rows", 36)),
+                )
+            except Exception as exc:
+                await websocket.send_json(
+                    {"type": "error", "code": terminal_open_error_code(exc)}
+                )
+                return
         await websocket.send_json({"type": "connected"})
         await bridge_terminal(websocket, terminal)
     except WebSocketDisconnect:
@@ -63,4 +75,3 @@ async def terminal_websocket(websocket: WebSocket, host_id: str) -> None:
     finally:
         if ticket is not None:
             websocket.app.state.terminal_tickets.closed(ticket.user_id)
-

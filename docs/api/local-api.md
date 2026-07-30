@@ -55,7 +55,9 @@
 }
 ```
 
-密码只写不读，响应仅包含 `has_password`。主机变更会唤醒主节点资产同步。
+密码只写不读，响应仅包含 `has_password`。主机变更会唤醒主节点资产同步。更新
+地址或端口会清除已确认指纹，必须重新测试并确认；只更新名称、账号、标签等
+非端点字段会保留原指纹。
 
 ## 主节点配置
 
@@ -80,7 +82,7 @@
   "host": "master.example.com",
   "port": 443,
   "has_token": true,
-  "runtime_status": "running"
+  "runtime_status": "online"
 }
 ```
 
@@ -94,8 +96,10 @@
 旧数据库配置与旧运行时保持不变。连接失败返回
 `MASTER_CONNECTION_FAILED`，校验失败返回 422。
 
-`runtime_status` 通常为 `running`（工作循环运行）、`configured`（已有客户端但
-无工作循环）或 `stopped`（缺少有效主机/Token 或运行时已停止）。
+`runtime_status` 是稳定枚举：`unconfigured` 表示缺少有效主机或 Token；
+`connecting` 表示运行时正在等待首次成功同步；`online` 表示最近一次心跳和任务
+轮询成功；`error` 表示心跳、轮询或后台工作循环失败；`stopped` 表示运行时没有
+活动配置或已经停止。
 
 ## 终端和文件
 

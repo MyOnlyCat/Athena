@@ -18,6 +18,14 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+async function waitForListingReady() {
+  await waitFor(() => {
+    expect(document.querySelector(".file-manager .ant-spin-container")).not.toHaveClass(
+      "ant-spin-blur"
+    );
+  });
+}
+
 test("renders remote path and file operations", async () => {
   vi.spyOn(filesApi, "list").mockResolvedValue({ path: "/", entries: [] });
   render(
@@ -75,6 +83,29 @@ test("keeps the committed path when a typed path request fails", async () => {
   await waitFor(() => expect(pathInput).toHaveValue("/"));
 });
 
+test("rejects a non-absolute remote path before making an API request", async () => {
+  const error = vi.fn();
+  vi.spyOn(App, "useApp").mockReturnValue({
+    message: { error, success: vi.fn() },
+    modal: { confirm: vi.fn() },
+    notification: {}
+  } as never);
+  vi.spyOn(filesApi, "list").mockResolvedValue({ path: "/", entries: [] });
+  const user = userEvent.setup();
+
+  render(<FileManager hostId="host-1" />);
+
+  const pathInput = await screen.findByRole("textbox", { name: "Remote path" });
+  await waitFor(() => expect(filesApi.list).toHaveBeenCalledTimes(1));
+  await user.clear(pathInput);
+  await user.type(pathInput, "var/log");
+  await user.keyboard("{Enter}");
+
+  expect(filesApi.list).toHaveBeenCalledTimes(1);
+  expect(error).toHaveBeenCalledWith("远程路径必须是绝对路径");
+  expect(pathInput).toHaveValue("var/log");
+});
+
 test("returns a blob and RFC 5987 filename from a download response", async () => {
   const blob = new Blob(["artifact-content"]);
   vi.spyOn(api, "get").mockResolvedValue({
@@ -88,6 +119,37 @@ test("returns a blob and RFC 5987 filename from a download response", async () =
     blob,
     filename: "release notes.txt"
   });
+  expect(api.get).toHaveBeenCalledWith(
+    "/files/host-1/download",
+    expect.objectContaining({
+      params: { path: "/opt/release/fallback.txt" },
+      responseType: "blob",
+      timeout: 0
+    })
+  );
+});
+
+test("uploads without a total-duration timeout while preserving AbortSignal cancellation", async () => {
+  const controller = new AbortController();
+  const onProgress = vi.fn();
+  const artifact = new File(["artifact"], "artifact.jar");
+  vi.spyOn(api, "post").mockResolvedValue({} as never);
+
+  await filesApi.upload("host-1", "/opt/artifact.jar", artifact, {
+    signal: controller.signal,
+    onProgress
+  });
+
+  expect(api.post).toHaveBeenCalledWith(
+    "/files/host-1/upload",
+    artifact,
+    expect.objectContaining({
+      params: { path: "/opt/artifact.jar" },
+      signal: controller.signal,
+      onUploadProgress: onProgress,
+      timeout: 0
+    })
+  );
 });
 
 test("uses the response filename when downloading a file", async () => {
@@ -124,6 +186,7 @@ test("uses the response filename when downloading a file", async () => {
   );
 
   await screen.findByText("fallback.txt");
+  await waitForListingReady();
   vi.spyOn(document, "createElement").mockReturnValue(anchor as never);
   await user.click(screen.getByRole("button", { name: "download" }));
 
@@ -158,6 +221,7 @@ test("reports download failures", async () => {
   render(<FileManager hostId="host-1" />);
 
   await screen.findByText("artifact.txt");
+  await waitForListingReady();
   await user.click(screen.getByRole("button", { name: "download" }));
 
   await waitFor(() => expect(error).toHaveBeenCalledWith("Download unavailable"));
@@ -290,6 +354,7 @@ test("uses the scoped app modal for deletion confirmation", async () => {
   render(<FileManager hostId="host-1" />);
 
   await screen.findByText("release.tgz");
+  await waitForListingReady();
   await user.click(screen.getByRole("button", { name: "delete" }));
 
   expect(confirm).toHaveBeenCalledWith(

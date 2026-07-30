@@ -5,8 +5,10 @@ import type { UploadSummary, UploadTask } from "../../shared/api/types";
 
 const MAX_CONCURRENT_UPLOADS = 3;
 let nextTaskId = 0;
+let nextBatchId = 0;
 
 interface ManagedUploadTask extends UploadTask {
+  batchId: string;
   generation: number;
   hostId: string;
 }
@@ -26,6 +28,7 @@ export function useUploadQueue(hostId: string, onCompleted: () => void) {
   const mountedRef = useRef(true);
   const previousHostRef = useRef(hostId);
   const onCompletedRef = useRef(onCompleted);
+  const notifiedBatchesRef = useRef(new Set<string>());
   onCompletedRef.current = onCompleted;
 
   useEffect(() => {
@@ -123,7 +126,6 @@ export function useUploadQueue(hostId: string, onCompleted: () => void) {
                 : item
             )
           );
-          onCompletedRef.current();
         })
         .catch((error: unknown) => {
           if (!mountedRef.current || generationRef.current !== task.generation) return;
@@ -142,11 +144,39 @@ export function useUploadQueue(hostId: string, onCompleted: () => void) {
     }
   }, [hostId, managedTasks]);
 
+  useEffect(() => {
+    const currentGeneration = generationRef.current;
+    const batches = new Map<string, ManagedUploadTask[]>();
+    for (const task of managedTasks) {
+      if (task.hostId !== hostId || task.generation !== currentGeneration) continue;
+      const batch = batches.get(task.batchId) ?? [];
+      batch.push(task);
+      batches.set(task.batchId, batch);
+    }
+
+    for (const [batchId, batch] of batches) {
+      if (notifiedBatchesRef.current.has(batchId)) continue;
+      const settled = batch.every(
+        (task) =>
+          task.status === "completed" ||
+          task.status === "failed" ||
+          task.status === "cancelled"
+      );
+      if (!settled) continue;
+      notifiedBatchesRef.current.add(batchId);
+      if (batch.some((task) => task.status === "completed")) {
+        onCompletedRef.current();
+      }
+    }
+  }, [hostId, managedTasks]);
+
   const enqueue = useCallback(
     (files: File[] | FileList, directory: string) => {
       const generation = generationRef.current;
+      const batchId = `batch-${Date.now()}-${++nextBatchId}`;
       const additions = Array.from(files).map<ManagedUploadTask>((file) => ({
         id: `upload-${Date.now()}-${++nextTaskId}`,
+        batchId,
         file,
         destination: destinationPath(directory, file.name),
         loaded: 0,

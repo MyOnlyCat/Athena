@@ -142,6 +142,7 @@ class DeploymentExecutor:
                     host.port,
                     host.username,
                     self.cipher.decrypt(host.encrypted_password),
+                    host.host_key_fingerprint,
                 ),
                 artifact,
                 target.target_directory,
@@ -164,4 +165,3 @@ class DeploymentExecutor:
     async def close(self) -> None:
         if self.running:
             await asyncio.gather(*self.running, return_exceptions=True)
-

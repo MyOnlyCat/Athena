@@ -25,35 +25,91 @@ export function FileManager({ hostId }: { hostId: string }) {
   const uploadRef = useRef<HTMLInputElement>(null);
   const listRequestIdRef = useRef(0);
   const mountedRef = useRef(true);
+  const pathRef = useRef("/");
+  const navigationPendingRef = useRef(false);
+  const refreshInFlightRef = useRef(false);
+  const refreshPendingRef = useRef(false);
 
-  async function load(nextPath = path) {
+  function commitListing(result: { path: string; entries: FileEntry[] }) {
+    pathRef.current = result.path;
+    setPath(result.path);
+    setPathDraft(result.path);
+    setEntries(result.entries);
+  }
+
+  async function navigate(nextPath: string) {
     if (!hostId || !mountedRef.current) return;
+    if (!nextPath.startsWith("/")) {
+      message.error("远程路径必须是绝对路径");
+      return;
+    }
     const requestId = ++listRequestIdRef.current;
+    navigationPendingRef.current = true;
     setLoading(true);
     try {
       const result = await filesApi.list(hostId, nextPath);
       if (!mountedRef.current || requestId !== listRequestIdRef.current) return;
-      setPath(result.path);
-      setPathDraft(result.path);
-      setEntries(result.entries);
+      commitListing(result);
     } catch (error) {
       if (!mountedRef.current || requestId !== listRequestIdRef.current) return;
-      setPathDraft(path);
+      setPathDraft(pathRef.current);
       message.error(apiMessage(error));
     } finally {
       if (mountedRef.current && requestId === listRequestIdRef.current) {
+        navigationPendingRef.current = false;
         setLoading(false);
+        if (refreshPendingRef.current) {
+          refreshPendingRef.current = false;
+          void refreshCurrent();
+        }
+      }
+    }
+  }
+
+  async function refreshCurrent() {
+    if (!hostId || !mountedRef.current) return;
+    if (navigationPendingRef.current || refreshInFlightRef.current) {
+      refreshPendingRef.current = true;
+      return;
+    }
+
+    refreshInFlightRef.current = true;
+    const requestId = ++listRequestIdRef.current;
+    setLoading(true);
+    try {
+      const result = await filesApi.list(hostId, pathRef.current);
+      if (!mountedRef.current || requestId !== listRequestIdRef.current) return;
+      commitListing(result);
+    } catch (error) {
+      if (!mountedRef.current || requestId !== listRequestIdRef.current) return;
+      message.error(apiMessage(error));
+    } finally {
+      refreshInFlightRef.current = false;
+      if (mountedRef.current && requestId === listRequestIdRef.current) {
+        setLoading(false);
+      }
+      if (
+        mountedRef.current &&
+        refreshPendingRef.current &&
+        !navigationPendingRef.current
+      ) {
+        refreshPendingRef.current = false;
+        void refreshCurrent();
       }
     }
   }
 
   const uploadQueue = useUploadQueue(hostId, () => {
-    void load();
+    void refreshCurrent();
   });
 
   useEffect(() => {
     mountedRef.current = true;
-    void load("/");
+    pathRef.current = "/";
+    navigationPendingRef.current = false;
+    refreshInFlightRef.current = false;
+    refreshPendingRef.current = false;
+    void navigate("/");
     return () => {
       mountedRef.current = false;
       listRequestIdRef.current += 1;
@@ -68,7 +124,7 @@ export function FileManager({ hostId }: { hostId: string }) {
       content: <Input onChange={(event) => (name = event.target.value)} />,
       onOk: async () => {
         await filesApi.mkdir(hostId, `${path.replace(/\/$/, "")}/${name}`);
-        await load();
+        await refreshCurrent();
       }
     });
   }
@@ -102,7 +158,7 @@ export function FileManager({ hostId }: { hostId: string }) {
       onOk: async () => {
         const parent = entry.path.slice(0, entry.path.lastIndexOf("/")) || "/";
         await filesApi.rename(hostId, entry.path, `${parent}/${name}`);
-        await load();
+        await refreshCurrent();
       }
     });
   }
@@ -115,7 +171,7 @@ export function FileManager({ hostId }: { hostId: string }) {
       okButtonProps: { danger: true },
       onOk: async () => {
         await filesApi.remove(hostId, entry.path, entry.type === "directory");
-        await load();
+        await refreshCurrent();
       }
     });
   }
@@ -128,7 +184,11 @@ export function FileManager({ hostId }: { hostId: string }) {
           <span className="mono">{path}</span>
         </div>
         <Tooltip title="刷新">
-          <Button type="text" icon={<ReloadOutlined />} onClick={() => load()} />
+          <Button
+            type="text"
+            icon={<ReloadOutlined />}
+            onClick={() => void refreshCurrent()}
+          />
         </Tooltip>
       </div>
       <div className="file-actions">
@@ -165,7 +225,7 @@ export function FileManager({ hostId }: { hostId: string }) {
         className="path-bar mono"
         value={pathDraft}
         onChange={(event) => setPathDraft(event.target.value)}
-        onPressEnter={() => void load(pathDraft)}
+        onPressEnter={() => void navigate(pathDraft)}
       />
       <Spin spinning={loading}>
         <div className="file-list">
@@ -173,7 +233,9 @@ export function FileManager({ hostId }: { hostId: string }) {
             <button
               type="button"
               className="file-row"
-              onDoubleClick={() => load(path.slice(0, path.lastIndexOf("/")) || "/")}
+              onDoubleClick={() =>
+                void navigate(path.slice(0, path.lastIndexOf("/")) || "/")
+              }
             >
               <FolderOpenOutlined /> <span>..</span>
             </button>
@@ -182,7 +244,9 @@ export function FileManager({ hostId }: { hostId: string }) {
             <div
               className="file-row"
               key={entry.path}
-              onDoubleClick={() => entry.type === "directory" && void load(entry.path)}
+              onDoubleClick={() =>
+                entry.type === "directory" && void navigate(entry.path)
+              }
             >
               {entry.type === "directory" ? <FolderOpenOutlined /> : <FileOutlined />}
               <span title={entry.name}>{entry.name}</span>

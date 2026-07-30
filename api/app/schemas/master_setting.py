@@ -6,6 +6,13 @@ from pydantic import BaseModel, Field, field_validator
 
 _HOST_LABEL = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")
 MasterScheme = Literal["http", "https"]
+MasterRuntimeStatus = Literal[
+    "unconfigured",
+    "connecting",
+    "online",
+    "error",
+    "stopped",
+]
 
 
 class MasterSettingInput(BaseModel):
@@ -35,7 +42,7 @@ class MasterSettingResponse(BaseModel):
     host: str
     port: int
     has_token: bool
-    runtime_status: str
+    runtime_status: MasterRuntimeStatus
 
 
 class MasterConnectionTestResponse(BaseModel):

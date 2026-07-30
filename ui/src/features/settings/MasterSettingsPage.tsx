@@ -5,9 +5,22 @@ import axios from "axios";
 import { useEffect, useState } from "react";
 
 import { apiMessage, masterSettingsApi } from "../../shared/api/client";
-import type { ApiErrorBody, MasterSettingInput, MasterSettingResponse } from "../../shared/api/types";
+import type {
+  ApiErrorBody,
+  MasterRuntimeStatus,
+  MasterSettingInput,
+  MasterSettingResponse
+} from "../../shared/api/types";
 
 type MasterSettingsForm = Omit<MasterSettingInput, "token"> & { token?: string };
+
+const runtimeStatusLabels: Record<MasterRuntimeStatus, string> = {
+  unconfigured: "未配置",
+  connecting: "连接中",
+  online: "在线",
+  error: "异常",
+  stopped: "已停止"
+};
 
 function toFormValues(settings: MasterSettingResponse): MasterSettingsForm {
   return {
@@ -82,7 +95,7 @@ export function MasterSettingsPage() {
           <h1>主节点配置</h1>
           <p>配置此节点连接主节点的地址和访问令牌。</p>
         </div>
-        {settings.data && <Tag>{settings.data.runtime_status}</Tag>}
+        {settings.data && <Tag>{runtimeStatusLabels[settings.data.runtime_status]}</Tag>}
       </header>
       <Card className="content-card" variant="borderless" loading={settings.isLoading}>
         {error && <Alert className="master-settings-error" type="error" message={error} showIcon />}

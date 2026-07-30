@@ -1,11 +1,13 @@
 import asyncio
 import platform
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import select
 
 from app.models.host import Host
+
+InventoryStatus = Literal["connecting", "online", "error"]
 
 
 def _read(item: Any, name: str) -> Any:
@@ -53,6 +55,7 @@ class InventorySynchronizer:
         self.master_client = master_client
         self.changed = asyncio.Event()
         self.last_success_at: datetime | None = None
+        self.status: InventoryStatus = "connecting"
 
     def notify_change(self) -> None:
         self.changed.set()
@@ -60,16 +63,24 @@ class InventorySynchronizer:
     async def sync_now(self) -> None:
         if self.master_client is None or self.session_factory is None:
             return
-        async with self.session_factory() as session:
-            hosts = list((await session.scalars(select(Host).order_by(Host.name))).all())
-        payload = build_inventory(
-            node_id=self.settings.node_id,
-            node_name=self.settings.node_name,
-            version=self.settings.node_version,
-            hosts=hosts,
-        )
-        await self.master_client.heartbeat(payload)
+        self.status = "connecting"
+        try:
+            async with self.session_factory() as session:
+                hosts = list(
+                    (await session.scalars(select(Host).order_by(Host.name))).all()
+                )
+            payload = build_inventory(
+                node_id=self.settings.node_id,
+                node_name=self.settings.node_name,
+                version=self.settings.node_version,
+                hosts=hosts,
+            )
+            await self.master_client.heartbeat(payload)
+        except Exception:
+            self.status = "error"
+            raise
         self.last_success_at = datetime.now(UTC)
+        self.status = "online"
         self.changed.clear()
 
     async def run(self, stop: asyncio.Event, claim_callback: Any = None) -> None:
@@ -79,9 +90,10 @@ class InventorySynchronizer:
                 if claim_callback is not None:
                     await claim_callback()
             except Exception:
-                pass
+                self.status = "error"
+            if stop.is_set():
+                break
             try:
                 await asyncio.wait_for(self.changed.wait(), timeout=60)
             except TimeoutError:
                 pass
-

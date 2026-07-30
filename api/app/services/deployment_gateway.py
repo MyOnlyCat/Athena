@@ -6,9 +6,7 @@ from pathlib import Path
 from secrets import token_hex
 from typing import Any
 
-import asyncssh
-
-from app.services.ssh import HostConnection
+from app.services.ssh import HostConnection, connect_ssh
 
 OutputCallback = Callable[[str, str], Awaitable[None]]
 
@@ -23,13 +21,7 @@ class AsyncDeploymentGateway:
         command: str,
         output: OutputCallback,
     ) -> int:
-        ssh = await asyncssh.connect(
-            connection.address,
-            port=connection.port,
-            username=connection.username,
-            password=connection.password,
-            known_hosts=None,
-        )
+        ssh = await connect_ssh(connection)
         try:
             sftp = await ssh.start_sftp_client()
             await sftp.makedirs(directory, exist_ok=True)

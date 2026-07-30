@@ -9,7 +9,7 @@ import asyncssh
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.core.errors import AppError
-from app.services.ssh import HostConnection
+from app.services.ssh import HostConnection, SSHHostKeyChanged, connect_ssh
 
 
 @dataclass(frozen=True)
@@ -71,26 +71,66 @@ class AsyncTerminal:
         self.process.change_terminal_size(cols, rows)
 
     async def close(self) -> None:
-        self.process.stdin.write_eof()
-        self.connection.close()
-        await self.connection.wait_closed()
+        errors: list[BaseException] = []
+        try:
+            self.process.stdin.write_eof()
+        except BaseException as exc:
+            errors.append(exc)
+        try:
+            self.connection.close()
+        except BaseException as exc:
+            errors.append(exc)
+        try:
+            await self.connection.wait_closed()
+        except BaseException as exc:
+            errors.append(exc)
+
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("terminal cleanup failed", errors)
 
 
 class AsyncTerminalGateway:
     async def open(self, connection: HostConnection, cols: int, rows: int) -> AsyncTerminal:
-        ssh = await asyncssh.connect(
-            connection.address,
-            port=connection.port,
-            username=connection.username,
-            password=connection.password,
-            known_hosts=None,
-        )
-        process = await ssh.create_process(
-            term_type="xterm-256color",
-            term_size=(cols, rows),
-            encoding=None,
-        )
+        ssh = await connect_ssh(connection)
+        try:
+            process = await ssh.create_process(
+                term_type="xterm-256color",
+                term_size=(cols, rows),
+                encoding=None,
+            )
+        except BaseException as exc:
+            try:
+                ssh.close()
+            except BaseException as close_error:
+                exc.add_note(f"SSH close failed: {close_error!r}")
+            try:
+                await ssh.wait_closed()
+            except BaseException as wait_error:
+                exc.add_note(f"SSH wait_closed failed: {wait_error!r}")
+            raise
         return AsyncTerminal(ssh, process)
+
+
+def terminal_open_error_code(error: BaseException) -> str:
+    if isinstance(error, asyncssh.PermissionDenied):
+        return "TERMINAL_AUTH_FAILED"
+    if isinstance(error, (SSHHostKeyChanged, asyncssh.HostKeyNotVerifiable)):
+        return "TERMINAL_HOST_KEY_CHANGED"
+    if isinstance(error, asyncssh.ChannelOpenError):
+        return "TERMINAL_CHANNEL_ERROR"
+    if isinstance(
+        error,
+        (
+            asyncssh.ConnectionLost,
+            asyncssh.DisconnectError,
+            TimeoutError,
+            OSError,
+        ),
+    ):
+        return "TERMINAL_NETWORK_ERROR"
+    return "TERMINAL_OPEN_ERROR"
 
 
 async def bridge_terminal(websocket: WebSocket, terminal: AsyncTerminal) -> None:
@@ -130,9 +170,12 @@ async def bridge_terminal(websocket: WebSocket, terminal: AsyncTerminal) -> None
                 raise result
     except WebSocketDisconnect:
         pass
-    except Exception:
+    except Exception as exc:
+        code = terminal_open_error_code(exc)
+        if code == "TERMINAL_OPEN_ERROR":
+            code = "TERMINAL_BRIDGE_ERROR"
         try:
-            await websocket.send_json({"type": "error", "code": "TERMINAL_BRIDGE_ERROR"})
+            await websocket.send_json({"type": "error", "code": code})
         except Exception:
             pass
     finally:

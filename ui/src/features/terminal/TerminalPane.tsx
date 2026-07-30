@@ -1,7 +1,22 @@
 import { FullscreenExitOutlined, FullscreenOutlined } from "@ant-design/icons";
 import { Button } from "antd";
 
-import { useTerminalSession } from "./useTerminalSession";
+import {
+  type TerminalSessionState,
+  useTerminalSession
+} from "./useTerminalSession";
+
+const terminalStateLabels: Record<TerminalSessionState, string> = {
+  idle: "未连接",
+  connecting: "正在连接",
+  connected: "SSH 已连接",
+  closed: "远程会话已正常关闭",
+  auth_failed: "SSH 认证失败",
+  host_key_changed: "SSH 主机密钥已变更",
+  network_error: "网络连接失败",
+  channel_error: "SSH 通道错误",
+  open_error: "SSH 会话打开失败"
+};
 
 export function TerminalPane({
   hostId,
@@ -21,7 +36,7 @@ export function TerminalPane({
         <div className="terminal-title">
           <span className={`terminal-status ${state}`} />
           <strong>{hostName ?? "请选择服务器"}</strong>
-          <small>{state === "connected" ? "SSH 已连接" : state}</small>
+          <small>{terminalStateLabels[state]}</small>
         </div>
         <div className="terminal-toolbar-actions">
           <span className="mono terminal-session-label">xterm-256color</span>

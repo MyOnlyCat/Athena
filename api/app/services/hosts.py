@@ -10,7 +10,11 @@ from app.core.errors import AppError
 from app.models.host import Host
 from app.schemas.host import HostCreate, HostUpdate
 from app.services.crypto import CredentialCipher
-from app.services.ssh import HostConnection, SSHClientProtocol
+from app.services.ssh import (
+    HostConnection,
+    SSHClientProtocol,
+    SSHHostKeyChanged,
+)
 
 
 class HostService:
@@ -60,8 +64,11 @@ class HostService:
         host = await self.get(host_id)
         if data.is_local and not host.is_local:
             await self._ensure_local_available(host_id)
+        endpoint_changed = host.address != data.address or host.port != data.port
         for key, value in data.model_dump(exclude={"password"}).items():
             setattr(host, key, value)
+        if endpoint_changed:
+            host.host_key_fingerprint = None
         if data.password is not None:
             host.encrypted_password = self.cipher.encrypt(data.password)
         try:
@@ -84,9 +91,23 @@ class HostService:
             port=host.port,
             username=host.username,
             password=self.cipher.decrypt(host.encrypted_password),
+            host_key_fingerprint=host.host_key_fingerprint,
         )
         try:
             result = await self.ssh_client.test_connection(connection)
+        except SSHHostKeyChanged as exc:
+            result = {
+                "status": "failed",
+                "code": "SSH_HOST_KEY_CHANGED",
+                "message": "SSH 主机指纹已变更",
+                "fingerprint": exc.actual,
+            }
+        except asyncssh.HostKeyNotVerifiable:
+            result = {
+                "status": "failed",
+                "code": "SSH_HOST_KEY_CHANGED",
+                "message": "SSH 主机指纹已变更",
+            }
         except asyncssh.PermissionDenied:
             result = {"status": "failed", "code": "SSH_AUTH_FAILED", "message": "SSH 认证失败"}
         except TimeoutError:

@@ -113,12 +113,14 @@ export const filesApi = {
       params: { path },
       headers: { "Content-Type": "application/octet-stream" },
       signal: options.signal,
-      onUploadProgress: options.onProgress
+      onUploadProgress: options.onProgress,
+      timeout: 0
     }),
   download: async (hostId: string, path: string) => {
     const response = await api.get<Blob>(`/files/${hostId}/download`, {
       params: { path },
-      responseType: "blob"
+      responseType: "blob",
+      timeout: 0
     });
     const contentDisposition = response.headers["content-disposition"];
     return {

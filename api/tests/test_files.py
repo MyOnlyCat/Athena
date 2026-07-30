@@ -1,3 +1,8 @@
+from typing import Any
+
+import asyncssh
+import pytest
+
 from app.services.files import AsyncRemoteFiles
 from app.services.ssh import HostConnection
 from tests.test_terminal import auth_headers, create_trusted_host
@@ -9,8 +14,10 @@ class FakeRemoteFiles:
         self.renames: list[tuple[str, str]] = []
         self.deletes: list[tuple[str, bool]] = []
         self.uploads: list[tuple[str, bytes]] = []
+        self.connections: list[HostConnection] = []
 
     async def list(self, connection, path):
+        self.connections.append(connection)
         return [
             {
                 "name": "release",
@@ -123,6 +130,7 @@ def test_remote_files_can_be_listed_and_mutated(client):
     assert fake.directories == ["/opt/new"]
     assert fake.renames == [("/opt/new", "/opt/current")]
     assert fake.deletes == [("/opt/current", True)]
+    assert fake.connections[0].host_key_fingerprint == "SHA256:trusted"
 
 
 def test_remote_file_can_be_uploaded_and_downloaded(client):
@@ -164,6 +172,88 @@ async def test_download_streaming_closes_the_sftp_connection_after_consumption()
 
     assert b"".join(chunks) == b"artifact-content"
     assert sftp.exited
+    assert ssh.closed
+    assert ssh.waited_for_close
+
+
+async def test_download_streaming_closes_after_consumer_aclose():
+    ssh = FakeSSH()
+    sftp = FakeSFTP()
+    remote_files = DownloadRemoteFiles(ssh, sftp)
+    connection = HostConnection(
+        "127.0.0.1",
+        22,
+        "deploy",
+        "secret",
+        host_key_fingerprint="SHA256:trusted",
+    )
+    stream = remote_files.download(connection, "/opt/release/app.jar")
+
+    assert await anext(stream) == b"artifact-"
+    await stream.aclose()
+
+    assert sftp.exited
+    assert ssh.closed
+    assert ssh.waited_for_close
+
+
+class ReadFailingRemoteFile(FakeRemoteFile):
+    async def read(self, size: int) -> bytes:
+        del size
+        raise OSError("remote read failed")
+
+
+async def test_download_streaming_closes_when_remote_read_raises():
+    ssh = FakeSSH()
+    sftp = FakeSFTP()
+    sftp.remote = ReadFailingRemoteFile()
+    remote_files = DownloadRemoteFiles(ssh, sftp)
+    connection = HostConnection(
+        "127.0.0.1",
+        22,
+        "deploy",
+        "secret",
+        host_key_fingerprint="SHA256:trusted",
+    )
+
+    with pytest.raises(OSError, match="remote read failed"):
+        await anext(remote_files.download(connection, "/opt/release/app.jar"))
+
+    assert sftp.exited
+    assert ssh.closed
+    assert ssh.waited_for_close
+
+
+class FailingSFTPConnection(FakeSSH):
+    async def start_sftp_client(self) -> None:
+        raise asyncssh.ChannelOpenError(1, "SFTP unavailable")
+
+
+@pytest.mark.asyncio
+async def test_sftp_acquisition_failure_closes_ssh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ssh = FailingSFTPConnection()
+
+    async def connect(*args: Any, **kwargs: Any) -> FailingSFTPConnection:
+        del args, kwargs
+        return ssh
+
+    import app.services.files as files_module
+
+    monkeypatch.setattr(files_module, "connect_ssh", connect, raising=False)
+
+    with pytest.raises(asyncssh.ChannelOpenError):
+        await AsyncRemoteFiles()._connect(
+            HostConnection(
+                "node.example.com",
+                22,
+                "root",
+                "secret",
+                host_key_fingerprint="SHA256:trusted",
+            )
+        )
+
     assert ssh.closed
     assert ssh.waited_for_close
 

@@ -82,6 +82,12 @@ export interface FileEntry {
 }
 
 export type MasterScheme = "http" | "https";
+export type MasterRuntimeStatus =
+  | "unconfigured"
+  | "connecting"
+  | "online"
+  | "error"
+  | "stopped";
 
 export interface MasterSettingInput {
   scheme: MasterScheme;
@@ -95,7 +101,7 @@ export interface MasterSettingResponse {
   host: string;
   port: number;
   has_token: boolean;
-  runtime_status: string;
+  runtime_status: MasterRuntimeStatus;
 }
 
 export interface MasterConnectionTestResponse {

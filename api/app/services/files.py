@@ -4,21 +4,24 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
-import asyncssh
-
-from app.services.ssh import HostConnection
+from app.services.ssh import HostConnection, connect_ssh
 
 
 class AsyncRemoteFiles:
     async def _connect(self, connection: HostConnection) -> tuple[Any, Any]:
-        ssh = await asyncssh.connect(
-            connection.address,
-            port=connection.port,
-            username=connection.username,
-            password=connection.password,
-            known_hosts=None,
-        )
-        return ssh, await ssh.start_sftp_client()
+        ssh = await connect_ssh(connection)
+        try:
+            return ssh, await ssh.start_sftp_client()
+        except BaseException as exc:
+            try:
+                ssh.close()
+            except BaseException as close_error:
+                exc.add_note(f"SSH close failed: {close_error!r}")
+            try:
+                await ssh.wait_closed()
+            except BaseException as wait_error:
+                exc.add_note(f"SSH wait_closed failed: {wait_error!r}")
+            raise
 
     async def list(self, connection: HostConnection, path: str) -> list[dict[str, Any]]:
         ssh, sftp = await self._connect(connection)

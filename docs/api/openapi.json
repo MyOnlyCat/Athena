@@ -1877,6 +1877,13 @@
           },
           "runtime_status": {
             "type": "string",
+            "enum": [
+              "unconfigured",
+              "connecting",
+              "online",
+              "error",
+              "stopped"
+            ],
             "title": "Runtime Status"
           }
         },

@@ -30,7 +30,13 @@ async def connection_for(request: Request, session: SessionDep, host_id: str) ->
     password = CredentialCipher(request.app.state.settings.credential_key).decrypt(
         host.encrypted_password
     )
-    return HostConnection(host.address, host.port, host.username, password)
+    return HostConnection(
+        host.address,
+        host.port,
+        host.username,
+        password,
+        host.host_key_fingerprint,
+    )
 
 
 @router.get("/{host_id}/list", response_model=FileListResponse)
