@@ -14,3 +14,9 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: vi.fn()
   }))
 });
+
+const getComputedStyle = window.getComputedStyle.bind(window);
+Object.defineProperty(window, "getComputedStyle", {
+  writable: true,
+  value: (element: Element) => getComputedStyle(element)
+});

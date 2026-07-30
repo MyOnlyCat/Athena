@@ -1,6 +1,7 @@
 import { Spin } from "antd";
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import { AdministratorsPage } from "../features/administrators/AdministratorsPage";
 import { useAuth } from "../features/auth/AuthContext";
 import { LoginPage } from "../features/auth/LoginPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
@@ -35,16 +36,7 @@ export function AppRouter() {
             />
           }
         />
-        <Route
-          path="administrators"
-          element={
-            <FoundationPage
-              eyebrow="ADMINISTRATORS"
-              title="管理员"
-              description="管理员账号维护将在后续需求中提供。"
-            />
-          }
-        />
+        <Route path="administrators" element={<AdministratorsPage />} />
         <Route
           path="audit"
           element={

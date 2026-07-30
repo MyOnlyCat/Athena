@@ -1,6 +1,6 @@
 import axios, { AxiosError } from "axios";
 
-import type { ApiErrorBody, User } from "./types";
+import type { ApiErrorBody, User, UserPage } from "./types";
 
 export const api = axios.create({ baseURL: "/api/v1", timeout: 20_000 });
 
@@ -31,5 +31,33 @@ export const authApi = {
   },
   async logout() {
     await api.post("/auth/logout");
+  }
+};
+
+export const administratorsApi = {
+  async list(page: number, pageSize: number) {
+    return (
+      await api.get<UserPage>("/administrators", {
+        params: { page, page_size: pageSize }
+      })
+    ).data;
+  },
+  async create(username: string, password: string) {
+    return (
+      await api.post<User>("/administrators", {
+        username,
+        password
+      })
+    ).data;
+  },
+  async status(id: string, isActive: boolean) {
+    return (
+      await api.patch<User>(`/administrators/${id}/status`, {
+        is_active: isActive
+      })
+    ).data;
+  },
+  async resetPassword(id: string, password: string) {
+    await api.post(`/administrators/${id}/reset-password`, { password });
   }
 };

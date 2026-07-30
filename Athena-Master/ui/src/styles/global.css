@@ -187,8 +187,20 @@ button, input { font: inherit; }
 .user-summary span { margin-top: 2px; color: var(--text-muted); font-size: 10px; }
 .app-content { min-height: calc(100vh - 64px); padding: 34px; }
 .page-header { margin-bottom: 26px; }
+.page-header-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
 .page-header h1 { margin: 0 0 8px; font-size: 30px; }
 .page-header p { margin: 0; }
+.content-card {
+  padding: 20px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+}
 .foundation-card {
   max-width: 720px;
   border-radius: 12px;
@@ -218,4 +230,5 @@ button, input { font: inherit; }
   .app-sider { display: none; }
   .app-sider + .ant-layout { margin-left: 0; }
   .app-content { padding: 20px; }
+  .page-header-split { align-items: stretch; flex-direction: column; }
 }
