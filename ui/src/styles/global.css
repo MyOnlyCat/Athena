@@ -131,6 +131,10 @@ button, input { font: inherit; }
 .primary-cell { color: var(--text); font-weight: 600; }
 .secondary-cell { margin-top: 4px; color: var(--text-muted); font-size: 11px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.master-settings-page { max-width: 920px; }
+.master-settings-page .content-card { padding: 24px; }
+.master-settings-error { margin-bottom: 18px; }
+.master-settings-help { margin: -4px 0 18px; color: var(--text-muted); font-size: 12px; }
 .empty-page { display: grid; min-height: 60vh; place-content: center; text-align: center; }
 .empty-page h1 { margin: 0; font-size: 38px; }
 

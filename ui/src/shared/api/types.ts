@@ -81,6 +81,27 @@ export interface FileEntry {
   permissions: string;
 }
 
+export type MasterScheme = "http" | "https";
+
+export interface MasterSettingInput {
+  scheme: MasterScheme;
+  host: string;
+  port: number;
+  token: string;
+}
+
+export interface MasterSettingResponse {
+  scheme: MasterScheme;
+  host: string;
+  port: number;
+  has_token: boolean;
+  runtime_status: string;
+}
+
+export interface MasterConnectionTestResponse {
+  status: "success";
+}
+
 export type UploadTaskStatus =
   | "queued"
   | "uploading"

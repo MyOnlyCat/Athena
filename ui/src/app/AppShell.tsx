@@ -1,4 +1,5 @@
 import {
+  ApiOutlined,
   AuditOutlined,
   BulbOutlined,
   CloudServerOutlined,
@@ -51,6 +52,7 @@ export function AppShell() {
           selectedKeys={[location.pathname]}
           onClick={({ key }) => navigate(key)}
           items={[
+            { key: "/master-settings", icon: <ApiOutlined />, label: "主节点配置" },
             { key: "/", icon: <DashboardOutlined />, label: "节点概览" },
             { key: "/hosts", icon: <CloudServerOutlined />, label: "主机管理" },
             { key: "/terminal", icon: <SettingOutlined />, label: "网页 SSH" },

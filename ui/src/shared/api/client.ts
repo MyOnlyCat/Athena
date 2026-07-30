@@ -8,6 +8,9 @@ import type {
   FileEntry,
   Host,
   HostInput,
+  MasterConnectionTestResponse,
+  MasterSettingInput,
+  MasterSettingResponse,
   SSHTestResult,
   UploadOptions,
   User
@@ -126,6 +129,14 @@ export const filesApi = {
       )
     };
   }
+};
+
+export const masterSettingsApi = {
+  get: async () => (await api.get<MasterSettingResponse>("/master-settings")).data,
+  test: async (input: MasterSettingInput) =>
+    (await api.post<MasterConnectionTestResponse>("/master-settings/test", input)).data,
+  update: async (input: MasterSettingInput) =>
+    (await api.put<MasterSettingResponse>("/master-settings", input)).data
 };
 
 export const auditApi = {

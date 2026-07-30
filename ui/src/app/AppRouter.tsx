@@ -6,6 +6,7 @@ import { useAuth } from "../features/auth/AuthContext";
 import { LoginPage } from "../features/auth/LoginPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { HostsPage } from "../features/hosts/HostsPage";
+import { MasterSettingsPage } from "../features/settings/MasterSettingsPage";
 import { TasksPage } from "../features/tasks/TasksPage";
 import { TerminalPage } from "../features/terminal/TerminalPage";
 import { UsersPage } from "../features/users/UsersPage";
@@ -21,6 +22,7 @@ export function AppRouter() {
         <Route index element={<DashboardPage />} />
         <Route path="hosts" element={<HostsPage />} />
         <Route path="terminal" element={<TerminalPage />} />
+        <Route path="master-settings" element={<MasterSettingsPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="audit" element={<AuditPage />} />
