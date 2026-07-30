@@ -57,6 +57,35 @@ body={"running_tasks":0}
 signature=89fc0647ffaec69188abcac1bc0eb747ac6bf869a35aac18753dfa9ee6e70caa
 ```
 
+## 子节点连接配置与热替换
+
+子节点本地提供以下已认证接口：
+
+| 方法 | 路径 | 行为 |
+| --- | --- | --- |
+| `GET` | `/api/v1/master-settings` | 返回有效地址、`has_token` 和 `runtime_status` |
+| `POST` | `/api/v1/master-settings/test` | 向候选地址发送签名心跳；不保存、不应用 |
+| `PUT` | `/api/v1/master-settings` | 测试、加密保存并即时应用 |
+
+`ATHENA_MASTER_NODE_URL` 和 `ATHENA_NODE_TOKEN` 是首次启动默认值。数据库尚无
+`master_settings` 行时使用它们；成功保存后，数据库中的协议、主机、端口和
+加密 Token 整体优先，重启不会重新被环境变量覆盖。
+
+GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或密文。测试和保存
+请求的 `token` 为空字符串时复用当前有效 Token。Token 使用本节点
+`ATHENA_CREDENTIAL_KEY` 加密落库。
+
+保存按单一重配置锁串行执行：
+
+1. 校验候选地址并向主节点发送一次签名心跳。
+2. 准备新的客户端、资产同步器和任务执行器；新工作循环在激活前等待。
+3. 加密保存并提交数据库。
+4. 停止并关闭旧工作循环、执行器和 HTTP 客户端，再激活候选运行时。
+
+因此更改不要求重启 API。连接测试、候选准备或数据库提交失败时，不替换旧运行时；
+数据库提交失败时还会清理候选资源。`runtime_status` 为 `running`、
+`configured` 或 `stopped`。
+
 ## 心跳与完整主机清单
 
 `POST /api/node/v1/nodes/heartbeat`
@@ -213,4 +242,3 @@ signature=89fc0647ffaec69188abcac1bc0eb747ac6bf869a35aac18753dfa9ee6e70caa
 - 同一任务不能重复租给不同节点。
 - 重复事件批次不生成重复日志，只确认连续事件序号。
 - 主节点 UI 能按目标实时展示阶段、进度、stdout、stderr 和结果。
-
