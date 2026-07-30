@@ -47,7 +47,11 @@ python -m venv .venv
 $env:ATHENA_JWT_SECRET="development-secret-at-least-32-characters"
 $env:ATHENA_CREDENTIAL_KEY="<44 字符 Fernet 密钥>"
 $env:ATHENA_BOOTSTRAP_USERNAME="admin"
-$env:ATHENA_BOOTSTRAP_PASSWORD="change-me-now"
+$bootstrapPassword = Read-Host "输入本地管理员密码（至少 12 字符）" -AsSecureString
+$env:ATHENA_BOOTSTRAP_PASSWORD = [System.Net.NetworkCredential]::new(
+  "",
+  $bootstrapPassword
+).Password
 .\.venv\Scripts\uvicorn app.main:create_app --factory --reload
 ```
 

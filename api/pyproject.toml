@@ -17,6 +17,13 @@ dependencies = [
   "uvicorn[standard]>=0.32,<1",
 ]
 
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [project.optional-dependencies]
 dev = [
   "mypy>=1.13,<2",
@@ -45,4 +52,3 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["asyncssh.*"]
 ignore_missing_imports = true
-
