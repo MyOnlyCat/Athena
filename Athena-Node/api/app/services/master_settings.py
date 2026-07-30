@@ -84,3 +84,10 @@ class MasterSettingsService:
             row.encrypted_token = self.cipher.encrypt(config.token)
         await self.session.flush()
         return row
+
+    async def set_registration_pending(self) -> None:
+        row = await self.get_row()
+        if row is None:
+            raise RuntimeError("master settings must be saved before registration")
+        row.registration_status = "pending"
+        await self.session.commit()

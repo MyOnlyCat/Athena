@@ -1,10 +1,35 @@
-# Athena 主节点与子节点协议
+# Athena Master 与接入节点协议
 
 版本：`v1`  
 主节点前缀：`/api/node/v1`  
 编码：UTF-8 JSON
 
-本文档供雅典娜主节点后端 Codex 直接实现。主节点构建制品；Athena-Node 仅领取任务、下载校验、传输、执行命令和回传进度。
+本文档描述 Athena-Node 主动访问 Athena-Master 的 v1 协议。Master 不回连 Node。
+
+## 注册申请与审批
+
+Node 管理员先在本地保存 Master 地址和节点独占 Token，再使用独立的“申请接入”
+操作提交：
+
+`POST /api/node/v1/registration-applications`
+
+请求使用下文相同的 HMAC 认证头。JSON 正文固定包含 `node_id`、`reported_name`、
+`hostname` 和 `software_version`，不包含 Token。Master 在 JSON 解析前读取原始
+body，并保存原始字节、认证头、接收时间和来源 IP；此时所有申请资料均标记为
+“身份未验证”，不能视为已认证事实。请求时间戳与 Master 接收时间的偏差不能超过
+300 秒。
+
+Master 管理接口均要求管理员 Bearer Token：
+
+| 方法 | 路径 | 行为 |
+| --- | --- | --- |
+| `GET` | `/api/v1/registration-applications` | 服务端分页列出申请 |
+| `POST` | `/api/v1/registration-applications/{id}/approve` | 输入同一 Node Token 并批准 |
+
+审批时 Master 使用保存的原始 body 和认证头重新计算 HMAC，不重新序列化 JSON。
+Token 不匹配时返回 `401 REGISTRATION_TOKEN_INVALID`，申请保持待审批。验证成功后
+创建已启用接入节点，并使用 `ATHENA_MASTER_CREDENTIAL_KEY` 加密保存 Token。
+Token 明文、密文都不会通过 API 返回。
 
 ## 节点认证
 
@@ -77,14 +102,15 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
 
 保存按单一重配置锁串行执行：
 
-1. 校验候选地址并向主节点发送一次签名心跳。
+1. 校验候选地址和 Token。
 2. 准备新的客户端、资产同步器和任务执行器；新工作循环在激活前等待。
 3. 加密保存并提交数据库。
 4. 停止并关闭旧工作循环、执行器和 HTTP 客户端，再激活候选运行时。
 
-因此更改不要求重启 API。连接测试、候选准备或数据库提交失败时，不替换旧运行时；
-数据库提交失败时还会清理候选资源。`runtime_status` 为 `running`、
-`configured` 或 `stopped`。
+保存不要求 Node 已获批准或心跳成功，因此可以先持久化配置再申请接入；连接测试仍是
+独立且不保存的操作。候选准备或数据库提交失败时不替换旧运行时，数据库提交失败时
+还会清理候选资源。`registration_status` 为 `not_submitted` 或 `pending`，
+`runtime_status` 为 `unconfigured`、`connecting`、`online`、`error` 或 `stopped`。
 
 ## 心跳与完整主机清单
 

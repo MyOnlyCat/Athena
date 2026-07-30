@@ -1,4 +1,10 @@
-import { CopyOutlined, KeyOutlined, SaveOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import {
+  CopyOutlined,
+  FormOutlined,
+  KeyOutlined,
+  SaveOutlined,
+  ThunderboltOutlined
+} from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
@@ -67,6 +73,7 @@ export function MasterSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [registering, setRegistering] = useState(false);
 
   useEffect(() => {
     if (settings.data) form.setFieldsValue(toFormValues(settings.data));
@@ -103,6 +110,22 @@ export function MasterSettingsPage() {
     }
   }
 
+  async function register() {
+    try {
+      setError(null);
+      setRegistering(true);
+      const values = await payload();
+      await masterSettingsApi.update(values);
+      await masterSettingsApi.register();
+      form.setFieldValue("token", "");
+      await settings.refetch();
+    } catch (requestError) {
+      setError(masterSettingsMessage(requestError, "save"));
+    } finally {
+      setRegistering(false);
+    }
+  }
+
   function createToken() {
     form.setFieldValue("token", generateToken());
     void form.validateFields(["token"]);
@@ -130,7 +153,14 @@ export function MasterSettingsPage() {
           <h1>主节点配置</h1>
           <p>配置此节点连接主节点的地址和访问令牌。</p>
         </div>
-        {settings.data && <Tag>{runtimeStatusLabels[settings.data.runtime_status]}</Tag>}
+        {settings.data && (
+          <Space>
+            {settings.data.registration_status === "pending" && (
+              <Tag color="processing">待管理员审批</Tag>
+            )}
+            <Tag>{runtimeStatusLabels[settings.data.runtime_status]}</Tag>
+          </Space>
+        )}
       </header>
       <Card className="content-card" variant="borderless" loading={settings.isLoading}>
         {error && <Alert className="master-settings-error" type="error" message={error} showIcon />}
@@ -208,6 +238,13 @@ export function MasterSettingsPage() {
             </Button>
             <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving}>
               保存并应用
+            </Button>
+            <Button
+              icon={<FormOutlined />}
+              loading={registering}
+              onClick={register}
+            >
+              申请接入
             </Button>
           </div>
         </Form>

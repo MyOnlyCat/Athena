@@ -10,6 +10,7 @@ import type {
   HostInput,
   HostProbeSetting,
   MasterConnectionTestResponse,
+  RegistrationApplicationResponse,
   MasterSettingInput,
   MasterSettingResponse,
   SSHTestResult,
@@ -143,7 +144,13 @@ export const masterSettingsApi = {
   test: async (input: MasterSettingInput) =>
     (await api.post<MasterConnectionTestResponse>("/master-settings/test", input)).data,
   update: async (input: MasterSettingInput) =>
-    (await api.put<MasterSettingResponse>("/master-settings", input)).data
+    (await api.put<MasterSettingResponse>("/master-settings", input)).data,
+  register: async () =>
+    (
+      await api.post<RegistrationApplicationResponse>(
+        "/master-settings/registration"
+      )
+    ).data
 };
 
 export const auditApi = {

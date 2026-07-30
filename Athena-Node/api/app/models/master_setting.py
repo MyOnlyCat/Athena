@@ -15,6 +15,12 @@ class MasterSetting(Base):
     host: Mapped[str] = mapped_column(String(255), nullable=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False)
     encrypted_token: Mapped[str | None] = mapped_column(String(2048))
+    registration_status: Mapped[str] = mapped_column(
+        String(20),
+        default="not_submitted",
+        server_default="not_submitted",
+        nullable=False,
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

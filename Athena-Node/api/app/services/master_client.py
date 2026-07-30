@@ -80,6 +80,9 @@ class MasterClient:
     async def heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._post("/api/node/v1/nodes/heartbeat", payload)
 
+    async def submit_registration(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._post("/api/node/v1/registration-applications", payload)
+
     async def claim_tasks(self, running_tasks: int, limit: int = 4) -> list[dict[str, Any]]:
         result = await self._post(
             f"/api/node/v1/nodes/{self.node_id}/tasks/claim",

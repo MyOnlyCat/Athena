@@ -17,3 +17,30 @@ export interface ApiErrorBody {
   code: string;
   message: string;
 }
+
+export interface RegistrationApplication {
+  id: string;
+  node_id: string;
+  reported_name: string;
+  hostname: string;
+  software_version: string;
+  status: "pending" | "approved";
+  identity_verified: boolean;
+  received_at: string;
+}
+
+export interface RegistrationApplicationPage {
+  items: RegistrationApplication[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
+export interface AccessNode {
+  node_id: string;
+  reported_name: string;
+  hostname: string;
+  software_version: string;
+  management_status: "active";
+  approved_at: string;
+}

@@ -212,7 +212,7 @@ def test_put_encrypts_token_and_never_returns_it(settings: Settings) -> None:
     assert CredentialCipher(settings.credential_key).decrypt(ciphertext) == valid_token(
         "new-master-secret"
     )
-    assert runtime.tested[0].base_url == "https://master.example.com:9443"
+    assert runtime.tested == []
     assert runtime.applied[0].base_url == "https://master.example.com:9443"
 
 
@@ -249,7 +249,7 @@ def test_put_with_empty_token_retains_existing_ciphertext(settings: Settings) ->
     assert first.status_code == 200
     assert second.status_code == 200
     assert first_ciphertext == second_ciphertext
-    assert runtime.tested[-1].token == valid_token("saved-secret")
+    assert runtime.tested == []
     assert runtime.applied[-1].base_url == "http://new-master.example.com:8080"
 
 
@@ -339,7 +339,7 @@ def test_invalid_master_host_and_port_return_422_without_testing(
     assert runtime.applied == []
 
 
-def test_failed_connection_test_keeps_database_and_runtime_unchanged(
+def test_save_is_not_blocked_by_connection_test_for_an_unapproved_node(
     settings: Settings,
 ) -> None:
     clients = configured_client(settings)
@@ -356,7 +356,6 @@ def test_failed_connection_test_keeps_database_and_runtime_unchanged(
                 "token": valid_token("saved-secret"),
             },
         )
-        old_ciphertext = stored_ciphertext(settings)
         runtime.test_error = AppError(
             "MASTER_CONNECTION_FAILED",
             "Unable to connect to the master node",
@@ -378,12 +377,14 @@ def test_failed_connection_test_keeps_database_and_runtime_unchanged(
         clients.close()
 
     assert saved.status_code == 200
-    assert failed.status_code == 400
-    assert failed.json()["code"] == "MASTER_CONNECTION_FAILED"
+    assert failed.status_code == 200
     assert "must-not-leak" not in failed.text
-    assert current_ciphertext == old_ciphertext
-    assert current_address == ("https", "old-master.example.com", 443)
-    assert len(runtime.applied) == 1
+    assert CredentialCipher(settings.credential_key).decrypt(current_ciphertext) == valid_token(
+        "must-not-leak"
+    )
+    assert current_address == ("http", "new-master.example.com", 8080)
+    assert len(runtime.applied) == 2
+    assert runtime.tested == []
 
 
 def test_failed_candidate_prepare_keeps_database_and_runtime_unchanged(

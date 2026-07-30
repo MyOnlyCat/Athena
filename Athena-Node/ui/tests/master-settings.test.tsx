@@ -31,7 +31,8 @@ const savedSettings: MasterSettingResponse = {
   host: "master.example.com",
   port: 8443,
   has_token: true,
-  runtime_status: "online"
+  runtime_status: "online",
+  registration_status: "not_submitted"
 };
 
 const runtimeStatuses: Array<[MasterRuntimeStatus, string]> = [
@@ -70,6 +71,7 @@ beforeEach(() => {
   vi.spyOn(masterSettingsApi, "get").mockResolvedValue(savedSettings);
   vi.spyOn(masterSettingsApi, "test").mockResolvedValue({ status: "success" });
   vi.spyOn(masterSettingsApi, "update").mockResolvedValue(savedSettings);
+  vi.spyOn(masterSettingsApi, "register").mockResolvedValue({ status: "pending" });
 });
 
 afterEach(() => {
@@ -101,6 +103,29 @@ test("groups Token controls and configuration actions into consistent UI regions
   const actions = screen.getByRole("group", { name: "配置操作" });
   expect(within(actions).getByRole("button", { name: /连接测试$/ })).toBeInTheDocument();
   expect(within(actions).getByRole("button", { name: /保存并应用$/ })).toBeInTheDocument();
+  expect(within(actions).getByRole("button", { name: /申请接入$/ })).toBeInTheDocument();
+});
+
+test("saves the form before submitting an independent registration application", async () => {
+  const user = userEvent.setup();
+  vi.mocked(masterSettingsApi.get)
+    .mockResolvedValueOnce(savedSettings)
+    .mockResolvedValueOnce({ ...savedSettings, registration_status: "pending" });
+  renderPage();
+
+  await screen.findByDisplayValue("master.example.com");
+  await user.click(screen.getByRole("button", { name: /申请接入$/ }));
+
+  await waitFor(() =>
+    expect(masterSettingsApi.update).toHaveBeenCalledWith({
+      scheme: "https",
+      host: "master.example.com",
+      port: 8443,
+      token: ""
+    })
+  );
+  await waitFor(() => expect(masterSettingsApi.register).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText("待管理员审批")).toBeInTheDocument();
 });
 
 test("generates a 32-byte Base64URL Token and copies it immediately", async () => {
