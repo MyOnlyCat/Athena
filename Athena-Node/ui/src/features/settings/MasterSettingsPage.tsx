@@ -1,6 +1,17 @@
-import { SaveOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { CopyOutlined, KeyOutlined, SaveOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Tag } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Descriptions,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Tag
+} from "antd";
 import axios from "axios";
 import { useEffect, useState } from "react";
 
@@ -45,6 +56,12 @@ function masterSettingsMessage(error: unknown, operation: "test" | "save"): stri
     : "保存主节点配置失败，请检查配置后重试。";
 }
 
+function generateToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const binary = String.fromCharCode(...Array.from(bytes));
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
 export function MasterSettingsPage() {
   const [form] = Form.useForm<MasterSettingsForm>();
   const settings = useQuery({ queryKey: ["master-settings"], queryFn: masterSettingsApi.get });
@@ -87,6 +104,25 @@ export function MasterSettingsPage() {
     }
   }
 
+  function createToken() {
+    form.setFieldValue("token", generateToken());
+    void form.validateFields(["token"]);
+  }
+
+  async function copyToken() {
+    const token = form.getFieldValue("token");
+    if (!token) {
+      setError("请先生成或输入 Token。");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(token);
+      setError(null);
+    } catch {
+      setError("复制 Token 失败，请手动复制。");
+    }
+  }
+
   return (
     <div className="page-stack master-settings-page">
       <header className="page-header">
@@ -99,6 +135,12 @@ export function MasterSettingsPage() {
       </header>
       <Card className="content-card" variant="borderless" loading={settings.isLoading}>
         {error && <Alert className="master-settings-error" type="error" message={error} showIcon />}
+        {settings.data && (
+          <Descriptions column={1} size="small" title="接入节点身份">
+            <Descriptions.Item label="节点上报名">{settings.data.node_name}</Descriptions.Item>
+            <Descriptions.Item label="节点 ID">{settings.data.node_id}</Descriptions.Item>
+          </Descriptions>
+        )}
         <Form form={form} layout="vertical" onFinish={save}>
           <div className="form-grid">
             <Form.Item name="scheme" label="协议" rules={[{ required: true }]}>
@@ -113,12 +155,36 @@ export function MasterSettingsPage() {
               <InputNumber min={1} max={65535} style={{ width: "100%" }} />
             </Form.Item>
             <Form.Item label="Token" extra={settings.data?.has_token ? "已保存" : "尚未保存"}>
-              <Form.Item name="token" noStyle>
+              <Form.Item
+                name="token"
+                noStyle
+                rules={[
+                  {
+                    validator: (_, value: string | undefined) => {
+                      if (!value || (value.length >= 32 && value.length <= 256)) {
+                        return Promise.resolve();
+                      }
+                      return Promise.reject(new Error("Token 长度必须为 32 至 256 个字符"));
+                    }
+                  }
+                ]}
+              >
                 <Input.Password aria-label="Token" autoComplete="new-password" />
               </Form.Item>
             </Form.Item>
           </div>
           <p className="master-settings-help">留空会复用当前已保存的 Token。</p>
+          <Space wrap>
+            <Button icon={<KeyOutlined />} onClick={createToken}>
+              生成 Token
+            </Button>
+            <Button icon={<CopyOutlined />} onClick={copyToken}>
+              复制 Token
+            </Button>
+          </Space>
+          <p className="master-settings-help">
+            生成值使用浏览器安全随机源，只会显示在当前输入框中；请立即复制并妥善保存。
+          </p>
           <Space>
             <Button icon={<ThunderboltOutlined />} loading={testing} onClick={testConnection}>
               连接测试

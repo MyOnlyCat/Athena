@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.node_token import validate_node_token
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -25,7 +27,7 @@ class Settings(BaseSettings):
     bootstrap_password: str = ""
     max_upload_bytes: int = Field(default=1_073_741_824, ge=1)
     host_probe_interval_minutes: int = Field(default=5, ge=1, le=1440)
-    node_id: str = "athena-node-local"
+    node_id: str = ""
     node_name: str = "Athena Node"
     node_version: str = "0.1.0"
     master_node_url: str = ""
@@ -40,6 +42,11 @@ class Settings(BaseSettings):
         if value and len(value) != 44:
             raise ValueError("credential key must be a 44-character Fernet key")
         return value
+
+    @field_validator("node_token")
+    @classmethod
+    def validate_configured_node_token(cls, value: str) -> str:
+        return validate_node_token(value)
 
 
 @lru_cache

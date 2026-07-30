@@ -32,6 +32,7 @@ from app.services.host_probe import HostProbeScheduler, HostProbeSettingsService
 from app.services.inventory_sync import InventorySynchronizer
 from app.services.master_runtime import MasterRuntime
 from app.services.master_settings import MasterSettingsService
+from app.services.node_identity import NodeIdentityService
 from app.services.ssh import AsyncSSHClient
 from app.services.terminal import AsyncTerminalGateway, TerminalTicketStore
 
@@ -53,27 +54,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             def publish_runtime(inventory: Any | None, executor: Any | None) -> None:
                 app.state.inventory_sync = inventory or InventorySynchronizer(
-                    active_settings,
+                    runtime_settings,
                     app.state.session_factory,
                 )
                 app.state.deployment_executor = executor
 
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            async with app.state.session_factory() as session:
+                identity = await NodeIdentityService(session, active_settings).get_or_create()
+            runtime_settings = active_settings.model_copy(
+                update={
+                    "node_id": identity.node_id,
+                    "node_name": identity.reported_name,
+                }
+            )
+            app.state.node_identity = identity
+            app.state.settings = runtime_settings
             master_runtime = MasterRuntime(
-                settings=active_settings,
+                settings=runtime_settings,
                 session_factory=app.state.session_factory,
                 artifact_service=ArtifactService(
                     artifact_http,
-                    active_settings.data_dir / "artifacts",
-                    allow_http=active_settings.allow_http_artifacts,
+                    runtime_settings.data_dir / "artifacts",
+                    allow_http=runtime_settings.allow_http_artifacts,
                 ),
                 gateway=AsyncDeploymentGateway(),
-                cipher=CredentialCipher(active_settings.credential_key),
-                start_worker=active_settings.environment != "test",
+                cipher=CredentialCipher(runtime_settings.credential_key),
+                start_worker=runtime_settings.environment != "test",
                 on_change=publish_runtime,
             )
             app.state.master_runtime = master_runtime
-            async with engine.begin() as connection:
-                await connection.run_sync(Base.metadata.create_all)
             async with app.state.session_factory() as session:
                 await HostProbeSettingsService(
                     session,
@@ -95,8 +106,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             async with app.state.session_factory() as session:
                 config = await MasterSettingsService(
                     session,
-                    active_settings,
-                    CredentialCipher(active_settings.credential_key),
+                    runtime_settings,
+                    CredentialCipher(runtime_settings.credential_key),
                 ).get_effective()
             await master_runtime.apply(config, recover=True)
             host_probe_scheduler = HostProbeScheduler(

@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.node_token import validate_node_token
+
 _HOST_LABEL = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")
 MasterScheme = Literal["http", "https"]
 MasterRuntimeStatus = Literal[
@@ -36,8 +38,15 @@ class MasterSettingInput(BaseModel):
             host = host.rstrip(".")
         return host
 
+    @field_validator("token")
+    @classmethod
+    def validate_token_length(cls, value: str) -> str:
+        return validate_node_token(value)
+
 
 class MasterSettingResponse(BaseModel):
+    node_id: str
+    node_name: str
     scheme: MasterScheme
     host: str
     port: int

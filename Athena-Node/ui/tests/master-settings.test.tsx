@@ -25,6 +25,8 @@ vi.mock("../src/features/auth/AuthContext", () => ({
 vi.mock("../src/features/terminal/TerminalPage", () => ({ TerminalPage: () => null }));
 
 const savedSettings: MasterSettingResponse = {
+  node_id: "018f47a2-4b5c-7def-8123-456789abcdef",
+  node_name: "Athena Node",
   scheme: "https",
   host: "master.example.com",
   port: 8443,
@@ -83,6 +85,43 @@ test("loads saved connection details while keeping the Token field blank", async
   expect(screen.getByLabelText("Token")).toHaveValue("");
   expect(screen.getByText("已保存")).toBeInTheDocument();
   expect(screen.getByText("在线")).toBeInTheDocument();
+  expect(screen.getByText("Athena Node")).toBeInTheDocument();
+  expect(screen.getByText("018f47a2-4b5c-7def-8123-456789abcdef")).toBeInTheDocument();
+});
+
+test("generates a 32-byte Base64URL Token and copies it immediately", async () => {
+  const user = userEvent.setup();
+  const random = vi.spyOn(crypto, "getRandomValues").mockImplementation((array) => {
+    (array as Uint8Array).fill(255);
+    return array;
+  });
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText }
+  });
+  renderPage();
+
+  await screen.findByDisplayValue("master.example.com");
+  await user.click(screen.getByRole("button", { name: /生成 Token$/ }));
+
+  const generated = `${"_".repeat(42)}8`;
+  expect(random).toHaveBeenCalled();
+  expect(screen.getByLabelText("Token")).toHaveValue(generated);
+  await user.click(screen.getByRole("button", { name: /复制 Token$/ }));
+  expect(writeText).toHaveBeenCalledWith(generated);
+});
+
+test("shows a Chinese validation error for a short manually entered Token", async () => {
+  const user = userEvent.setup();
+  renderPage();
+
+  await screen.findByDisplayValue("master.example.com");
+  await user.type(screen.getByLabelText("Token"), "too-short");
+  await user.click(screen.getByRole("button", { name: /保存并应用$/ }));
+
+  expect(await screen.findByText("Token 长度必须为 32 至 256 个字符")).toBeInTheDocument();
+  expect(masterSettingsApi.update).not.toHaveBeenCalled();
 });
 
 test.each(runtimeStatuses)("renders the %s runtime status in Chinese", async (runtime_status, label) => {

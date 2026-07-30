@@ -2,6 +2,7 @@ from app.models.deployment import DeploymentEvent, DeploymentTarget, DeploymentT
 from app.models.host import Host
 from app.models.host_probe_setting import HostProbeSetting
 from app.models.master_setting import MasterSetting
+from app.models.node_identity import NodeIdentity
 from app.models.user import RevokedToken, User
 
 __all__ = [
@@ -12,6 +13,7 @@ __all__ = [
     "Host",
     "HostProbeSetting",
     "MasterSetting",
+    "NodeIdentity",
     "RevokedToken",
     "User",
 ]
