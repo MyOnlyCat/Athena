@@ -103,6 +103,23 @@ async def test_login_locks_only_the_username_and_source_ip_pair(
     assert other_username.status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_common_api_errors_use_chinese_messages(client: AsyncClient) -> None:
+    missing = await client.get("/api/v1/does-not-exist")
+    invalid = await client.post("/api/v1/auth/login", json={"username": "admin"})
+
+    assert missing.status_code == 404
+    assert missing.json() == {
+        "code": "NOT_FOUND",
+        "message": "请求的资源不存在",
+    }
+    assert invalid.status_code == 422
+    assert invalid.json() == {
+        "code": "INVALID_REQUEST",
+        "message": "请求参数无效",
+    }
+
+
 def test_access_token_defaults_to_thirty_minutes(settings: Settings) -> None:
     assert settings.access_token_minutes == 30
 

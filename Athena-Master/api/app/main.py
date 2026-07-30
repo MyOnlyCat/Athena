@@ -2,13 +2,19 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy import text
 from starlette.exceptions import HTTPException
 
 from app.api.v1.auth import router as auth_router
 from app.core.config import Settings, get_settings
 from app.core.database import Base, create_engine, create_session_factory
-from app.core.errors import AppError, app_error_handler, http_error_handler
+from app.core.errors import (
+    AppError,
+    app_error_handler,
+    http_error_handler,
+    validation_error_handler,
+)
 from app.services.auth import AuthService, LoginThrottle
 
 
@@ -49,6 +55,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.login_throttle = LoginThrottle()
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(HTTPException, http_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(
+        RequestValidationError,
+        validation_error_handler,  # type: ignore[arg-type]
+    )
     app.include_router(auth_router, prefix="/api/v1")
 
     @app.get("/api/v1/health")

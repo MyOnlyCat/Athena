@@ -42,10 +42,18 @@ export function LoginPage({ onLogin }: Props) {
           <p className="muted">使用主节点管理员账号继续</p>
           {error && <Alert type="error" showIcon message={error} />}
           <Form layout="vertical" onFinish={submit} requiredMark={false}>
-            <Form.Item label="用户名" name="username" rules={[{ required: true }]}>
+            <Form.Item
+              label="用户名"
+              name="username"
+              rules={[{ required: true, message: "请输入用户名" }]}
+            >
               <Input prefix={<UserOutlined />} autoComplete="username" />
             </Form.Item>
-            <Form.Item label="密码" name="password" rules={[{ required: true }]}>
+            <Form.Item
+              label="密码"
+              name="password"
+              rules={[{ required: true, message: "请输入密码" }]}
+            >
               <Input.Password
                 prefix={<LockOutlined />}
                 autoComplete="current-password"

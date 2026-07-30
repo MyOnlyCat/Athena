@@ -19,3 +19,13 @@ test("submits Master administrator credentials and shows Chinese API failure", a
   expect(login).toHaveBeenCalledWith("admin", "wrong");
   expect(await screen.findByText("用户名或密码错误")).toBeInTheDocument();
 });
+
+test("shows Chinese required-field messages", async () => {
+  const user = userEvent.setup();
+  render(<LoginPage onLogin={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: /登\s*录/ }));
+
+  expect(await screen.findByText("请输入用户名")).toBeInTheDocument();
+  expect(await screen.findByText("请输入密码")).toBeInTheDocument();
+});

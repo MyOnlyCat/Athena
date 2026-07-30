@@ -1,4 +1,5 @@
 from fastapi import Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
@@ -19,8 +20,19 @@ async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
 
 
 async def http_error_handler(_: Request, exc: HTTPException) -> JSONResponse:
-    message = exc.detail if isinstance(exc.detail, str) else "请求处理失败"
+    errors = {
+        404: ("NOT_FOUND", "请求的资源不存在"),
+        405: ("METHOD_NOT_ALLOWED", "请求方法不受支持"),
+    }
+    code, message = errors.get(exc.status_code, ("HTTP_ERROR", "请求处理失败"))
     return JSONResponse(
         status_code=exc.status_code,
-        content={"code": "HTTP_ERROR", "message": message},
+        content={"code": code, "message": message},
+    )
+
+
+async def validation_error_handler(_: Request, __: RequestValidationError) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={"code": "INVALID_REQUEST", "message": "请求参数无效"},
     )
