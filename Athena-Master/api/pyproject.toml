@@ -1,0 +1,48 @@
+[project]
+name = "athena-master-api"
+version = "0.1.0"
+description = "Athena central management API"
+requires-python = ">=3.12"
+dependencies = [
+  "aiosqlite>=0.20,<1",
+  "alembic>=1.13,<2",
+  "fastapi>=0.115,<1",
+  "pydantic-settings>=2.6,<3",
+  "pyjwt>=2.9,<3",
+  "pwdlib[argon2]>=0.2,<1",
+  "sqlalchemy[asyncio]>=2.0,<3",
+  "uvicorn[standard]>=0.32,<1",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27,<1",
+  "mypy>=1.13,<2",
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.24,<1",
+  "ruff>=0.8,<1",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
