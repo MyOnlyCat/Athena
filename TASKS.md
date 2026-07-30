@@ -6,8 +6,8 @@
 - [x] 将 Git 根目录提升到 Athena 层级
 - [x] 将组件代码归入 `Athena-Node/` 和 `Athena-Master/`
 - [x] 将详细文档集中到根级 `docs/`
-- [ ] 完成迁移后的全量验证
-- [ ] 推送到 `MyOnlyCat/Athena`
+- [x] 完成迁移后的全量验证
+- [x] 推送到 `MyOnlyCat/Athena`
 
 ## Athena-Node
 
