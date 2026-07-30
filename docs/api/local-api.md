@@ -121,7 +121,7 @@
 `filename` 和 RFC 5987 UTF-8 `filename*`。
 
 前端的三并发上传、取消、路径导航和下载行为见
-[文件传输指南](../file-transfers.md)。
+[文件传输指南](../node/file-transfers.md)。
 
 ## 发布任务和审计
 
