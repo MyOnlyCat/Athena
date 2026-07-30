@@ -8,7 +8,8 @@ Athena-Node、Athena-Master、部署入口和项目文档。
 - **Athena-Node：部分完成。** 已具备管理员认证、SSH 主机管理、网页终端、SFTP
   文件管理、审计、主节点连接配置和发布任务执行等基础能力，仍需在真实部署环境中
   完成集成验证与后续迭代。
-- **Athena-Master：尚未开发。** 当前只保留职责说明，不提供可运行服务。
+- **Athena-Master：基础应用已完成。** 已具备可迁移的 SQLite 数据库、初始化管理员
+  登录、健康检查、中文管理界面外壳和 Windows 本地启动入口；节点接入与资产汇总待实现。
 
 ## 仓库结构
 
@@ -18,7 +19,7 @@ Athena/
 │   ├── api/           # FastAPI 后端
 │   ├── ui/            # React 管理界面
 │   └── deploy/        # Nginx 配置
-├── Athena-Master/     # 主节点规划（尚未实现）
+├── Athena-Master/     # 主节点 API、管理界面与本地启动入口
 ├── docs/              # 统一文档、协议、设计和实施计划
 ├── compose.yaml       # 当前 Athena-Node 部署入口
 ├── .env.example
@@ -58,7 +59,8 @@ docker compose up -d --build
 默认访问地址为 `http://服务器地址:8080`。首次启动会创建管理员账号；已有账号不会
 被覆盖。业务数据和下载制品保存在 Docker 命名卷 `athena_data` 中。
 
-> `compose.yaml` 当前不包含 Athena-Master 服务。
+> `compose.yaml` 当前不包含 Athena-Master 服务；Master 第一阶段使用独立的 Windows
+> 本地启动入口。
 
 ## 本地开发
 
@@ -89,6 +91,15 @@ cd Athena-Node\ui
 npm ci
 npm run dev
 ```
+
+Master 可直接运行：
+
+```powershell
+Athena-Master\ui\start-dev.cmd
+```
+
+Master API 和 UI 默认使用 `127.0.0.1:8001` 与 `127.0.0.1:5174`。其目录结构与 Node
+保持一致，但两个应用独立安装、独立迁移且不互相导入内部模块。
 
 ## 文档
 
