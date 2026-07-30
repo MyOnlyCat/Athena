@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "antd";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -87,6 +87,20 @@ test("loads saved connection details while keeping the Token field blank", async
   expect(screen.getByText("在线")).toBeInTheDocument();
   expect(screen.getByText("Athena Node")).toBeInTheDocument();
   expect(screen.getByText("018f47a2-4b5c-7def-8123-456789abcdef")).toBeInTheDocument();
+});
+
+test("groups Token controls and configuration actions into consistent UI regions", async () => {
+  renderPage();
+
+  await screen.findByDisplayValue("master.example.com");
+  const tokenGroup = screen.getByRole("group", { name: "Token 配置" });
+  expect(within(tokenGroup).getByLabelText("Token")).toBeInTheDocument();
+  expect(within(tokenGroup).getByRole("button", { name: /生成 Token$/ })).toBeInTheDocument();
+  expect(within(tokenGroup).getByRole("button", { name: /复制 Token$/ })).toBeInTheDocument();
+
+  const actions = screen.getByRole("group", { name: "配置操作" });
+  expect(within(actions).getByRole("button", { name: /连接测试$/ })).toBeInTheDocument();
+  expect(within(actions).getByRole("button", { name: /保存并应用$/ })).toBeInTheDocument();
 });
 
 test("generates a 32-byte Base64URL Token and copies it immediately", async () => {
