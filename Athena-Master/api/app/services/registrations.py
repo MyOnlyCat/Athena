@@ -1,5 +1,3 @@
-import hashlib
-import hmac
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -13,6 +11,7 @@ from app.schemas.registration import (
     RegistrationPayload,
 )
 from app.services.crypto import CredentialCipher
+from app.services.signing import verify_request_signature
 
 REGISTRATION_PATH = "/api/node/v1/registration-applications"
 TIMESTAMP_WINDOW_SECONDS = 300
@@ -20,26 +19,6 @@ TIMESTAMP_WINDOW_SECONDS = 300
 
 def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=value.tzinfo or UTC).astimezone(UTC)
-
-
-def _signature(
-    token: str,
-    *,
-    path: str,
-    timestamp: str,
-    nonce: str,
-    body: bytes,
-) -> str:
-    canonical = "\n".join(
-        (
-            "POST",
-            path,
-            timestamp,
-            nonce,
-            hashlib.sha256(body).hexdigest(),
-        )
-    )
-    return hmac.new(token.encode(), canonical.encode(), hashlib.sha256).hexdigest()
 
 
 class RegistrationService:
@@ -149,14 +128,16 @@ class RegistrationService:
                 "节点时间戳无效",
                 status_code=401,
             )
-        expected = _signature(
-            token,
-            path=application.request_path,
+        signature_valid = verify_request_signature(
+            secret=token,
+            method="POST",
+            path_with_query=application.request_path,
             timestamp=application.auth_timestamp,
             nonce=application.auth_nonce,
             body=application.raw_body,
+            signature=application.auth_signature,
         )
-        if not hmac.compare_digest(expected, application.auth_signature):
+        if not signature_valid:
             raise AppError(
                 "REGISTRATION_TOKEN_INVALID",
                 "Token 与注册申请不匹配",
