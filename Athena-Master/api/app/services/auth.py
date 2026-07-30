@@ -1,3 +1,4 @@
+from asyncio import Lock
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -45,11 +46,16 @@ class LoginThrottle:
 
 
 class AuthService:
-    def __init__(self, session: AsyncSession, settings: Settings) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        administrator_write_lock: Lock,
+    ) -> None:
         self.session = session
         self.settings = settings
         self.password_hash = PasswordHash.recommended()
-        self.users = UserService(session, self.password_hash)
+        self.users = UserService(session, self.password_hash, administrator_write_lock)
 
     async def authenticate(self, username: str, password: str) -> User:
         user = await self.users.get_by_normalized_username(username)
@@ -68,6 +74,7 @@ class AuthService:
             {
                 "sub": user.id,
                 "jti": str(uuid4()),
+                "auth_version": user.auth_version,
                 "iat": now,
                 "exp": now + timedelta(minutes=self.settings.access_token_minutes),
             },
@@ -86,6 +93,8 @@ class AuthService:
         user = await self.session.get(User, str(payload.get("sub", "")))
         if user is None:
             raise AppError("INVALID_TOKEN", "登录凭证无效", status_code=401)
+        if payload.get("auth_version") != user.auth_version:
+            raise AppError("TOKEN_REVOKED", "登录凭证已失效", status_code=401)
         if not user.is_active:
             raise AppError("USER_DISABLED", "用户已被禁用", status_code=403)
         return user, payload

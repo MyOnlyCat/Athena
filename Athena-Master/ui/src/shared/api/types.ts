@@ -6,6 +6,13 @@ export interface User {
   created_at: string;
 }
 
+export interface UserPage {
+  items: User[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
 export interface ApiErrorBody {
   code: string;
   message: string;
