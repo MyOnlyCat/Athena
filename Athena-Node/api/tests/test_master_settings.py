@@ -29,6 +29,10 @@ def auth_headers(client: TestClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
+def valid_token(label: str) -> str:
+    return label.ljust(32, "-")
+
+
 class FakeMasterRuntime:
     def __init__(self) -> None:
         self.status = "online"
@@ -114,7 +118,7 @@ def test_get_uses_environment_defaults_and_redacts_token(settings: Settings) -> 
     clients = configured_client(
         settings,
         master_node_url="https://master.example.com:9443",
-        node_token="environment-secret",
+        node_token=valid_token("environment-secret"),
     )
     client, _ = next(clients)
     try:
@@ -123,15 +127,64 @@ def test_get_uses_environment_defaults_and_redacts_token(settings: Settings) -> 
         clients.close()
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert {
+        key: payload[key]
+        for key in ("scheme", "host", "port", "has_token", "runtime_status")
+    } == {
         "scheme": "https",
         "host": "master.example.com",
         "port": 9443,
         "has_token": True,
         "runtime_status": "online",
     }
-    assert "environment-secret" not in response.text
+    assert payload["node_id"]
+    assert payload["node_name"] == "Athena Node"
+    assert valid_token("environment-secret") not in response.text
     assert "token" not in response.text.replace("has_token", "")
+
+
+def test_manual_token_must_be_empty_or_between_32_and_256_characters(
+    settings: Settings,
+) -> None:
+    clients = configured_client(settings)
+    client, runtime = next(clients)
+    headers = auth_headers(client)
+    base = {
+        "scheme": "https",
+        "host": "master.example.com",
+        "port": 443,
+    }
+    try:
+        too_short = client.put(
+            "/api/v1/master-settings",
+            headers=headers,
+            json={**base, "token": "a" * 31},
+        )
+        too_long = client.put(
+            "/api/v1/master-settings",
+            headers=headers,
+            json={**base, "token": "a" * 257},
+        )
+    finally:
+        clients.close()
+
+    assert too_short.status_code == 422
+    assert too_long.status_code == 422
+    assert "Token 长度必须为 32 至 256 个字符" in too_short.text
+    assert "Token 长度必须为 32 至 256 个字符" in too_long.text
+    assert runtime.tested == []
+
+
+@pytest.mark.parametrize("invalid_token", ["a" * 31, "a" * 257])
+def test_configured_token_must_be_between_32_and_256_characters(
+    settings: Settings,
+    invalid_token: str,
+) -> None:
+    clients = configured_client(settings, node_token=invalid_token)
+
+    with pytest.raises(ValueError, match="Token 长度必须为 32 至 256 个字符"):
+        next(clients)
 
 
 def test_put_encrypts_token_and_never_returns_it(settings: Settings) -> None:
@@ -145,7 +198,7 @@ def test_put_encrypts_token_and_never_returns_it(settings: Settings) -> None:
                 "scheme": "https",
                 "host": "master.example.com",
                 "port": 9443,
-                "token": "new-master-secret",
+                "token": valid_token("new-master-secret"),
             },
         )
         ciphertext = stored_ciphertext(settings)
@@ -154,9 +207,11 @@ def test_put_encrypts_token_and_never_returns_it(settings: Settings) -> None:
 
     assert response.status_code == 200
     assert response.json()["has_token"] is True
-    assert "new-master-secret" not in response.text
-    assert ciphertext != "new-master-secret"
-    assert CredentialCipher(settings.credential_key).decrypt(ciphertext) == "new-master-secret"
+    assert valid_token("new-master-secret") not in response.text
+    assert ciphertext != valid_token("new-master-secret")
+    assert CredentialCipher(settings.credential_key).decrypt(ciphertext) == valid_token(
+        "new-master-secret"
+    )
     assert runtime.tested[0].base_url == "https://master.example.com:9443"
     assert runtime.applied[0].base_url == "https://master.example.com:9443"
 
@@ -173,7 +228,7 @@ def test_put_with_empty_token_retains_existing_ciphertext(settings: Settings) ->
                 "scheme": "https",
                 "host": "old-master.example.com",
                 "port": 443,
-                "token": "saved-secret",
+                "token": valid_token("saved-secret"),
             },
         )
         first_ciphertext = stored_ciphertext(settings)
@@ -194,7 +249,7 @@ def test_put_with_empty_token_retains_existing_ciphertext(settings: Settings) ->
     assert first.status_code == 200
     assert second.status_code == 200
     assert first_ciphertext == second_ciphertext
-    assert runtime.tested[-1].token == "saved-secret"
+    assert runtime.tested[-1].token == valid_token("saved-secret")
     assert runtime.applied[-1].base_url == "http://new-master.example.com:8080"
 
 
@@ -204,7 +259,7 @@ def test_saved_database_settings_override_environment_after_restart(
     initial_clients = configured_client(
         settings,
         master_node_url="https://environment.example.com:9443",
-        node_token="environment-secret",
+        node_token=valid_token("environment-secret"),
     )
     initial_client, _ = next(initial_clients)
     try:
@@ -215,7 +270,7 @@ def test_saved_database_settings_override_environment_after_restart(
                 "scheme": "http",
                 "host": "database.example.com",
                 "port": 8080,
-                "token": "database-secret",
+                "token": valid_token("database-secret"),
             },
         )
     finally:
@@ -225,7 +280,7 @@ def test_saved_database_settings_override_environment_after_restart(
         settings.model_copy(
             update={
                 "master_node_url": "https://changed-environment.example.com:443",
-                "node_token": "changed-environment-secret",
+                    "node_token": valid_token("changed-environment-secret"),
             }
         )
     )
@@ -250,7 +305,7 @@ def test_saved_database_settings_override_environment_after_restart(
     assert loaded.json()["host"] == "database.example.com"
     assert loaded.json()["port"] == 8080
     assert tested.status_code == 200
-    assert runtime.tested[0].token == "database-secret"
+    assert runtime.tested[0].token == valid_token("database-secret")
 
 
 def test_invalid_master_host_and_port_return_422_without_testing(
@@ -298,7 +353,7 @@ def test_failed_connection_test_keeps_database_and_runtime_unchanged(
                 "scheme": "https",
                 "host": "old-master.example.com",
                 "port": 443,
-                "token": "saved-secret",
+                "token": valid_token("saved-secret"),
             },
         )
         old_ciphertext = stored_ciphertext(settings)
@@ -314,7 +369,7 @@ def test_failed_connection_test_keeps_database_and_runtime_unchanged(
                 "scheme": "http",
                 "host": "new-master.example.com",
                 "port": 8080,
-                "token": "must-not-leak",
+                "token": valid_token("must-not-leak"),
             },
         )
         current_ciphertext = stored_ciphertext(settings)
@@ -345,7 +400,7 @@ def test_failed_candidate_prepare_keeps_database_and_runtime_unchanged(
                 "scheme": "https",
                 "host": "old-master.example.com",
                 "port": 443,
-                "token": "old-secret",
+                "token": valid_token("old-secret"),
             },
         )
         old_ciphertext = stored_ciphertext(settings)
@@ -359,7 +414,7 @@ def test_failed_candidate_prepare_keeps_database_and_runtime_unchanged(
                     "scheme": "http",
                     "host": "candidate.example.com",
                     "port": 8080,
-                    "token": "candidate-secret",
+                    "token": valid_token("candidate-secret"),
                 },
             )
         current_ciphertext = stored_ciphertext(settings)
@@ -399,7 +454,7 @@ def test_failed_database_commit_keeps_old_runtime_and_discards_candidate(
                 "scheme": "https",
                 "host": "old-master.example.com",
                 "port": 443,
-                "token": "old-secret",
+                "token": valid_token("old-secret"),
             },
         )
         old_runtime = runtime.applied[-1]
@@ -418,7 +473,7 @@ def test_failed_database_commit_keeps_old_runtime_and_discards_candidate(
                     "scheme": "http",
                     "host": "candidate.example.com",
                     "port": 8080,
-                    "token": "candidate-secret",
+                    "token": valid_token("candidate-secret"),
                 },
             )
         client.app.dependency_overrides.clear()
@@ -450,7 +505,7 @@ def test_concurrent_empty_and_new_token_updates_stay_consistent(
                 "scheme": "https",
                 "host": "seed.example.com",
                 "port": 443,
-                "token": "seed-secret",
+                "token": valid_token("seed-secret"),
             },
         )
         runtime.test_delay = 0.05
@@ -474,7 +529,7 @@ def test_concurrent_empty_and_new_token_updates_stay_consistent(
                     "scheme": "https",
                     "host": "new-token.example.com",
                     "port": 9443,
-                    "token": "new-secret",
+                    "token": valid_token("new-secret"),
                 },
             )
             responses = [empty_future.result(), new_future.result()]
@@ -511,7 +566,7 @@ def test_connection_test_with_empty_token_uses_saved_token_without_applying(
                 "scheme": "https",
                 "host": "master.example.com",
                 "port": 443,
-                "token": "saved-secret",
+                "token": valid_token("saved-secret"),
             },
         )
         apply_count = len(runtime.applied)
@@ -531,7 +586,7 @@ def test_connection_test_with_empty_token_uses_saved_token_without_applying(
     assert saved.status_code == 200
     assert tested.status_code == 200
     assert tested.json() == {"status": "success"}
-    assert runtime.tested[-1].token == "saved-secret"
+    assert runtime.tested[-1].token == valid_token("saved-secret")
     assert len(runtime.applied) == apply_count
 
 
@@ -787,7 +842,7 @@ async def route_runtime_with_old_settings(
         await connection.run_sync(Base.metadata.create_all)
     session_factory = create_session_factory(engine)
     runtime: MasterRuntime = runtime_with_fakes(settings, tracker)
-    old_config = MasterConfig("https", "old.example.com", 443, "old")
+    old_config = MasterConfig("https", "old.example.com", 443, valid_token("old"))
     await runtime.apply(old_config)
     await asyncio.sleep(0)
     async with session_factory() as session:
@@ -815,6 +870,10 @@ async def route_runtime_with_old_settings(
             state=SimpleNamespace(
                 master_runtime=runtime,
                 settings=settings,
+                node_identity=SimpleNamespace(
+                    node_id=settings.node_id,
+                    reported_name=settings.node_name,
+                ),
             )
         )
     )
@@ -880,7 +939,7 @@ async def test_cancelled_real_sqlite_commit_keeps_database_runtime_and_token_ali
         scheme="http",
         host="committed.example.com",
         port=8080,
-        token="committed-token",
+        token=valid_token("committed-token"),
     )
 
     try:
@@ -907,7 +966,7 @@ async def test_cancelled_real_sqlite_commit_keeps_database_runtime_and_token_ali
             ).get_effective()
 
         assert saved.host == "committed.example.com"
-        assert saved.token == "committed-token"
+        assert saved.token == valid_token("committed-token")
         assert runtime._active is not None
         assert runtime._active.config.host == saved.host
         assert runtime._active.config.token == saved.token
@@ -958,7 +1017,7 @@ async def test_put_activates_committed_candidate_when_old_closers_fail(
         scheme="http",
         host="new.example.com",
         port=8080,
-        token="new",
+        token=valid_token("new"),
     )
 
     try:
@@ -979,21 +1038,21 @@ async def test_put_activates_committed_candidate_when_old_closers_fail(
 
         assert result.host == "new.example.com"
         assert saved.host == "new.example.com"
-        assert saved.token == "new"
-        assert tracker.events.count("worker-stop:old") == 1
-        assert tracker.events.count("worker-start:new") == 1
-        assert tracker.events.count("executor-close:old") == 1
-        assert tracker.events.count("client-close:old") == 1
+        assert saved.token == valid_token("new")
+        assert tracker.events.count(f"worker-stop:{valid_token('old')}") == 1
+        assert tracker.events.count(f"worker-start:{valid_token('new')}") == 1
+        assert tracker.events.count(f"executor-close:{valid_token('old')}") == 1
+        assert tracker.events.count(f"client-close:{valid_token('old')}") == 1
         assert tracker.active_workers == 1
         assert tracker.maximum_workers == 1
         assert runtime.status == "connecting"
 
         await runtime.stop()
 
-        assert tracker.events.count("executor-close:old") == 2
-        assert tracker.events.count("client-close:old") == 2
-        assert tracker.events.count("executor-close:new") == 1
-        assert tracker.events.count("client-close:new") == 1
+        assert tracker.events.count(f"executor-close:{valid_token('old')}") == 2
+        assert tracker.events.count(f"client-close:{valid_token('old')}") == 2
+        assert tracker.events.count(f"executor-close:{valid_token('new')}") == 1
+        assert tracker.events.count(f"client-close:{valid_token('new')}") == 1
     finally:
         await runtime.stop()
         await engine.dispose()
@@ -1038,7 +1097,7 @@ async def test_failed_rollback_still_discards_prepared_candidate(
                     scheme="http",
                     host="candidate.example.com",
                     port=8080,
-                    token="candidate",
+                    token=valid_token("candidate"),
                 ),
                 request,
                 CommitAndRollbackFailingSession(session, rollback_error),
@@ -1055,9 +1114,9 @@ async def test_failed_rollback_still_discards_prepared_candidate(
         assert candidate.worker is None
         assert candidate.executor is None
         assert candidate.client is None
-        assert tracker.events.count("executor-close:candidate") == 1
-        assert tracker.events.count("client-close:candidate") == 1
-        assert "worker-stop:old" not in tracker.events
+        assert tracker.events.count(f"executor-close:{valid_token('candidate')}") == 1
+        assert tracker.events.count(f"client-close:{valid_token('candidate')}") == 1
+        assert f"worker-stop:{valid_token('old')}" not in tracker.events
         assert tracker.active_workers == 1
         assert runtime.status == "connecting"
 

@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.core.node_token import validate_node_token
 from app.models.master_setting import MasterSetting
 from app.schemas.master_setting import MasterScheme, MasterSettingInput
 from app.services.crypto import CredentialCipher
@@ -36,17 +37,18 @@ class MasterSettingsService:
 
     def environment_config(self) -> MasterConfig:
         value = self.settings.master_node_url.strip()
+        token = validate_node_token(self.settings.node_token)
         if not value:
-            return MasterConfig("https", "", 443, self.settings.node_token)
+            return MasterConfig("https", "", 443, token)
         parsed = urlsplit(value)
         scheme = parsed.scheme.lower()
         if scheme not in {"http", "https"} or parsed.hostname is None:
-            return MasterConfig("https", "", 443, self.settings.node_token)
+            return MasterConfig("https", "", 443, token)
         return MasterConfig(
             cast(MasterScheme, scheme),
             parsed.hostname.lower(),
             parsed.port or (443 if scheme == "https" else 80),
-            self.settings.node_token,
+            token,
         )
 
     async def get_row(self) -> MasterSetting | None:

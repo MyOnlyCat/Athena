@@ -101,6 +101,8 @@ export interface MasterSettingInput {
 }
 
 export interface MasterSettingResponse {
+  node_id: string;
+  node_name: string;
   scheme: MasterScheme;
   host: string;
   port: number;

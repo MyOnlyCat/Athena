@@ -28,8 +28,13 @@ def service(request: Request, session: SessionDep) -> MasterSettingsService:
 def response(
     config: MasterConfig,
     runtime_status: MasterRuntimeStatus,
+    *,
+    node_id: str,
+    node_name: str,
 ) -> MasterSettingResponse:
     return MasterSettingResponse(
+        node_id=node_id,
+        node_name=node_name,
         scheme=config.scheme,
         host=config.host,
         port=config.port,
@@ -72,7 +77,13 @@ async def get_master_settings(
     runtime = request.app.state.master_runtime
     async with runtime.reconfigure():
         config = await service(request, session).get_effective()
-        return response(config, runtime.status)
+        identity = request.app.state.node_identity
+        return response(
+            config,
+            runtime.status,
+            node_id=identity.node_id,
+            node_name=identity.reported_name,
+        )
 
 
 @router.post("/test", response_model=MasterConnectionTestResponse)
@@ -122,4 +133,10 @@ async def update_master_settings(
             raise
         if cancellation is not None:
             raise cancellation
-        return response(config, runtime.status)
+        identity = request.app.state.node_identity
+        return response(
+            config,
+            runtime.status,
+            node_id=identity.node_id,
+            node_name=identity.reported_name,
+        )
