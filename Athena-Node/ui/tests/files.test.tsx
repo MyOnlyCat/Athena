@@ -38,7 +38,84 @@ test("renders remote path and file operations", async () => {
   expect(screen.getAllByText("/").length).toBeGreaterThan(0);
   expect(screen.getByRole("button", { name: /上传/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /新建目录/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /任务/ })).toBeInTheDocument();
   await waitFor(() => expect(filesApi.list).toHaveBeenCalledWith("host-1", "/"));
+});
+
+test("keeps remote files inside the constrained loading wrapper", async () => {
+  vi.spyOn(filesApi, "list").mockResolvedValue({ path: "/", entries: [] });
+  render(
+    <App>
+      <FileManager hostId="host-1" />
+    </App>
+  );
+
+  await waitForListingReady();
+  const fileList = document.querySelector(".file-list");
+  expect(fileList).not.toBeNull();
+  expect(fileList?.closest(".file-list-loading")).not.toBeNull();
+});
+
+test("shows file sizes in MB", async () => {
+  vi.spyOn(filesApi, "list").mockResolvedValue({
+    path: "/",
+    entries: [
+      {
+        name: "release.bin",
+        path: "/release.bin",
+        type: "file",
+        size: 1.5 * 1024 * 1024,
+        modified_at: null,
+        permissions: "-rw-r--r--"
+      },
+      {
+        name: "tiny.txt",
+        path: "/tiny.txt",
+        type: "file",
+        size: 1,
+        modified_at: null,
+        permissions: "-rw-r--r--"
+      },
+      {
+        name: "empty.txt",
+        path: "/empty.txt",
+        type: "file",
+        size: 0,
+        modified_at: null,
+        permissions: "-rw-r--r--"
+      }
+    ]
+  });
+
+  render(
+    <App>
+      <FileManager hostId="host-1" />
+    </App>
+  );
+
+  expect(await screen.findByText("1.50 MB")).toBeInTheDocument();
+  expect(screen.getByText("0.01 MB")).toBeInTheDocument();
+  expect(screen.getByText("0.00 MB")).toBeInTheDocument();
+});
+
+test("keeps the editable path and lets breadcrumb segments navigate", async () => {
+  vi.spyOn(filesApi, "list")
+    .mockResolvedValueOnce({ path: "/var/log/nginx", entries: [] })
+    .mockResolvedValueOnce({ path: "/var/log", entries: [] });
+  const user = userEvent.setup();
+
+  render(
+    <App>
+      <FileManager hostId="host-1" />
+    </App>
+  );
+
+  const pathInput = await screen.findByRole("textbox", { name: "Remote path" });
+  expect(pathInput).toHaveValue("/var/log/nginx");
+  await user.click(screen.getByRole("button", { name: "跳转到 /var/log" }));
+
+  await waitFor(() => expect(filesApi.list).toHaveBeenLastCalledWith("host-1", "/var/log"));
+  expect(pathInput).toHaveValue("/var/log");
 });
 
 test("submits a typed path when Enter is pressed", async () => {

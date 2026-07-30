@@ -8,6 +8,7 @@ import type {
   FileEntry,
   Host,
   HostInput,
+  HostProbeSetting,
   MasterConnectionTestResponse,
   MasterSettingInput,
   MasterSettingResponse,
@@ -50,6 +51,10 @@ export const authApi = {
 
 export const hostsApi = {
   list: async () => (await api.get<Host[]>("/hosts")).data,
+  getProbeSettings: async () =>
+    (await api.get<HostProbeSetting>("/hosts/probe-settings")).data,
+  updateProbeSettings: async (interval_minutes: number) =>
+    (await api.put<HostProbeSetting>("/hosts/probe-settings", { interval_minutes })).data,
   create: async (input: HostInput) => (await api.post<Host>("/hosts", input)).data,
   update: async (id: string, input: HostInput) =>
     (await api.put<Host>(`/hosts/${id}`, input)).data,

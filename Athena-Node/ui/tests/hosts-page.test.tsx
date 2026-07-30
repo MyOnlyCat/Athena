@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { App } from "antd";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -63,6 +63,10 @@ async function findTestConnectionButton() {
 }
 
 beforeEach(() => {
+  vi.spyOn(hostsApi, "getProbeSettings").mockResolvedValue({ interval_minutes: 5 });
+  vi.spyOn(hostsApi, "updateProbeSettings").mockImplementation(async (interval_minutes) => ({
+    interval_minutes
+  }));
   vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
     matches: false,
     media: query,
@@ -99,6 +103,23 @@ test("shows the verified SSH success after trusting an untrusted fingerprint", a
     vi.mocked(hostsApi.test).mock.invocationCallOrder[1]
   );
   expect(await screen.findByText("SSH 连接成功")).toBeInTheDocument();
+});
+
+test("loads and dynamically saves the global host probe interval", async () => {
+  vi.spyOn(hostsApi, "list").mockResolvedValue([host]);
+  const user = userEvent.setup();
+
+  renderPage();
+
+  const input = await screen.findByRole("spinbutton", { name: "探活间隔" });
+  expect(input).toHaveValue("5");
+  await waitFor(() => expect(input).toBeEnabled());
+  await user.clear(input);
+  await user.type(input, "10");
+  await user.click(screen.getByRole("button", { name: "保存间隔" }));
+
+  expect(hostsApi.updateProbeSettings).toHaveBeenCalledWith(10);
+  expect(await screen.findByText("探活间隔已保存，并已触发全量探活")).toBeInTheDocument();
 });
 
 test("shows the final SSH failure after trusting an untrusted fingerprint", async () => {

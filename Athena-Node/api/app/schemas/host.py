@@ -54,3 +54,11 @@ class SSHTestResponse(BaseModel):
     code: str
     message: str
     fingerprint: str | None = None
+
+
+class HostProbeSettingInput(BaseModel):
+    interval_minutes: int = Field(ge=1, le=1440)
+
+
+class HostProbeSettingResponse(HostProbeSettingInput):
+    model_config = ConfigDict(from_attributes=True)

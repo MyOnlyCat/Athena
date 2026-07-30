@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     bootstrap_username: str = ""
     bootstrap_password: str = ""
     max_upload_bytes: int = Field(default=1_073_741_824, ge=1)
+    host_probe_interval_minutes: int = Field(default=5, ge=1, le=1440)
     node_id: str = "athena-node-local"
     node_name: str = "Athena Node"
     node_version: str = "0.1.0"

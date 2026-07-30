@@ -28,6 +28,7 @@ from app.services.auth import AuthService, LoginThrottle
 from app.services.crypto import CredentialCipher
 from app.services.deployment_gateway import AsyncDeploymentGateway
 from app.services.files import AsyncRemoteFiles
+from app.services.host_probe import HostProbeScheduler, HostProbeSettingsService
 from app.services.inventory_sync import InventorySynchronizer
 from app.services.master_runtime import MasterRuntime
 from app.services.master_settings import MasterSettingsService
@@ -44,6 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine = create_engine(active_settings)
         artifact_http: httpx.AsyncClient | None = None
         master_runtime: MasterRuntime | None = None
+        host_probe_scheduler: HostProbeScheduler | None = None
         try:
             app.state.db_engine = engine
             app.state.session_factory = create_session_factory(engine)
@@ -72,6 +74,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.master_runtime = master_runtime
             async with engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)
+            async with app.state.session_factory() as session:
+                await HostProbeSettingsService(
+                    session,
+                    active_settings.host_probe_interval_minutes,
+                ).get()
             if active_settings.bootstrap_username and active_settings.bootstrap_password:
                 async with app.state.session_factory() as session:
                     auth = AuthService(session, active_settings)
@@ -92,10 +99,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     CredentialCipher(active_settings.credential_key),
                 ).get_effective()
             await master_runtime.apply(config, recover=True)
+            host_probe_scheduler = HostProbeScheduler(
+                app.state.session_factory,
+                CredentialCipher(active_settings.credential_key),
+                app.state.ssh_client,
+                default_interval_minutes=active_settings.host_probe_interval_minutes,
+            )
+            app.state.host_probe_scheduler = host_probe_scheduler
+            if active_settings.environment != "test":
+                host_probe_scheduler.start()
             yield
         finally:
             active_error = sys.exception()
             cleanup_errors: list[BaseException] = []
+            if host_probe_scheduler is not None:
+                try:
+                    await host_probe_scheduler.stop()
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
             if master_runtime is not None:
                 try:
                     await master_runtime.stop()
@@ -131,6 +152,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.terminal_gateway = AsyncTerminalGateway()
     app.state.remote_files = AsyncRemoteFiles()
     app.state.inventory_sync = InventorySynchronizer(active_settings, None)
+    app.state.host_probe_scheduler = None
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(HTTPException, http_error_handler)  # type: ignore[arg-type]
     app.include_router(auth_router, prefix="/api/v1")

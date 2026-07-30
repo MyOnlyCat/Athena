@@ -218,6 +218,12 @@ export function useUploadQueue(hostId: string, onCompleted: () => void) {
     );
   }, []);
 
+  const clearSettled = useCallback(() => {
+    setManagedTasks((current) =>
+      current.filter((task) => task.status === "queued" || task.status === "uploading")
+    );
+  }, []);
+
   const tasks: UploadTask[] = managedTasks;
   const summary = useMemo<UploadSummary>(() => {
     const totalBytes = tasks.reduce((total, task) => total + task.total, 0);
@@ -236,5 +242,5 @@ export function useUploadQueue(hostId: string, onCompleted: () => void) {
     };
   }, [tasks]);
 
-  return { enqueue, cancel, cancelAll, tasks, summary };
+  return { enqueue, cancel, cancelAll, clearSettled, tasks, summary };
 }

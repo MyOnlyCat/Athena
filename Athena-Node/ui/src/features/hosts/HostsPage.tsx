@@ -10,7 +10,7 @@ import {
   Space,
   Switch
 } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiMessage, hostsApi } from "../../shared/api/client";
 import type { Host, HostInput, SSHTestResult } from "../../shared/api/types";
@@ -20,8 +20,19 @@ export function HostsPage() {
   const { message, modal } = App.useApp();
   const client = useQueryClient();
   const query = useQuery({ queryKey: ["hosts"], queryFn: hostsApi.list });
+  const probeSettingsQuery = useQuery({
+    queryKey: ["host-probe-settings"],
+    queryFn: hostsApi.getProbeSettings
+  });
   const [editing, setEditing] = useState<Host | null | "new">(null);
+  const [probeInterval, setProbeInterval] = useState(5);
   const [form] = Form.useForm<HostInput & { tagsText: string }>();
+
+  useEffect(() => {
+    if (probeSettingsQuery.data) {
+      setProbeInterval(probeSettingsQuery.data.interval_minutes);
+    }
+  }, [probeSettingsQuery.data]);
 
   const save = useMutation({
     mutationFn: async (values: HostInput & { tagsText: string }) => {
@@ -40,6 +51,16 @@ export function HostsPage() {
       message.success("主机信息已保存");
       setEditing(null);
       client.invalidateQueries({ queryKey: ["hosts"] });
+    },
+    onError: (error) => message.error(apiMessage(error))
+  });
+
+  const saveProbeSettings = useMutation({
+    mutationFn: () => hostsApi.updateProbeSettings(probeInterval),
+    onSuccess: (setting) => {
+      setProbeInterval(setting.interval_minutes);
+      client.setQueryData(["host-probe-settings"], setting);
+      message.success("探活间隔已保存，并已触发全量探活");
     },
     onError: (error) => message.error(apiMessage(error))
   });
@@ -133,6 +154,34 @@ export function HostsPage() {
           </Button>
         </Space>
       </header>
+      <section className="content-card host-probe-settings">
+        <div>
+          <strong>自动探活</strong>
+          <p>API 启动或配置变更后立即探测全部主机，之后按该间隔执行。</p>
+        </div>
+        <Space>
+          <InputNumber
+            aria-label="探活间隔"
+            min={1}
+            max={1440}
+            precision={0}
+            value={probeInterval}
+            disabled={probeSettingsQuery.isLoading}
+            onChange={(value) => value !== null && setProbeInterval(value)}
+          />
+          <span>分钟</span>
+          <Button
+            type="primary"
+            loading={saveProbeSettings.isPending}
+            disabled={
+              probeSettingsQuery.isLoading || probeInterval < 1 || probeInterval > 1440
+            }
+            onClick={() => saveProbeSettings.mutate()}
+          >
+            保存间隔
+          </Button>
+        </Space>
+      </section>
       <section className="content-card">
         <HostTable
           hosts={query.data ?? []}

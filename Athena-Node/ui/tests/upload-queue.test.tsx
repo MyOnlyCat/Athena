@@ -241,6 +241,54 @@ test("reports a completed zero-byte upload as 100 percent", async () => {
   expect(result.current.summary.percent).toBe(100);
 });
 
+test("clears settled uploads while preserving active work", async () => {
+  const first = deferred<unknown>();
+  const second = deferred<unknown>();
+  vi.spyOn(filesApi, "upload")
+    .mockReturnValueOnce(first.promise as never)
+    .mockReturnValueOnce(second.promise as never);
+  const { result } = renderHook(() => useUploadQueue("host-1", vi.fn()));
+
+  act(() => result.current.enqueue([file("done.bin"), file("active.bin")], "/tmp"));
+  await waitFor(() => expect(filesApi.upload).toHaveBeenCalledTimes(2));
+  await act(async () => {
+    first.resolve({});
+    await first.promise;
+  });
+  await waitFor(() => expect(result.current.summary.completed).toBe(1));
+
+  act(() => result.current.clearSettled());
+
+  expect(result.current.tasks).toHaveLength(1);
+  expect(result.current.tasks[0].file.name).toBe("active.bin");
+  expect(result.current.summary.uploading).toBe(1);
+});
+
+test("opens the upload task drawer automatically and lets the task button reopen it", async () => {
+  vi.spyOn(filesApi, "list").mockResolvedValue({ path: "/", entries: [] });
+  vi.spyOn(filesApi, "upload").mockReturnValue(new Promise(() => undefined) as never);
+  const user = userEvent.setup();
+  const { container } = render(
+    <App>
+      <FileManager hostId="host-1" />
+    </App>
+  );
+
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+  await user.upload(input!, file("release.bin"));
+
+  expect(await screen.findByRole("dialog", { name: "上传任务" })).toBeInTheDocument();
+  expect(screen.getByText("release.bin")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "上传任务" })).not.toBeInTheDocument()
+  );
+
+  await user.click(screen.getByRole("button", { name: /任务/ }));
+  expect(await screen.findByRole("dialog", { name: "上传任务" })).toBeInTheDocument();
+  expect(screen.getByText("release.bin")).toBeInTheDocument();
+});
+
 test("file selection snapshots the committed directory, accepts multiple files, and clears input", async () => {
   vi.spyOn(filesApi, "list")
     .mockResolvedValueOnce({ path: "/releases", entries: [] })

@@ -5,10 +5,11 @@ import {
   FileOutlined,
   FolderAddOutlined,
   FolderOpenOutlined,
+  ProfileOutlined,
   ReloadOutlined,
   UploadOutlined
 } from "@ant-design/icons";
-import { App, Button, Input, Space, Spin, Tooltip } from "antd";
+import { App, Badge, Breadcrumb, Button, Drawer, Input, Space, Spin, Tooltip } from "antd";
 import { useEffect, useRef, useState } from "react";
 
 import { apiMessage, filesApi } from "../../shared/api/client";
@@ -16,12 +17,51 @@ import type { FileEntry } from "../../shared/api/types";
 import { UploadTasks } from "./UploadTasks";
 import { useUploadQueue } from "./useUploadQueue";
 
+function formatFileSize(size: number): string {
+  if (size <= 0) return "0.00 MB";
+  return `${Math.max(size / (1024 * 1024), 0.01).toFixed(2)} MB`;
+}
+
+function breadcrumbItems(path: string, navigate: (path: string) => void) {
+  const segments = path.split("/").filter(Boolean);
+  return [
+    {
+      title: (
+        <button
+          aria-label="跳转到根目录"
+          className="path-breadcrumb-link mono"
+          type="button"
+          onClick={() => navigate("/")}
+        >
+          /
+        </button>
+      )
+    },
+    ...segments.map((segment, index) => {
+      const target = `/${segments.slice(0, index + 1).join("/")}`;
+      return {
+        title: (
+          <button
+            aria-label={`跳转到 ${target}`}
+            className="path-breadcrumb-link mono"
+            type="button"
+            onClick={() => navigate(target)}
+          >
+            {segment}
+          </button>
+        )
+      };
+    })
+  ];
+}
+
 export function FileManager({ hostId }: { hostId: string }) {
   const { message, modal } = App.useApp();
   const [path, setPath] = useState("/");
   const [pathDraft, setPathDraft] = useState("/");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [uploadTasksOpen, setUploadTasksOpen] = useState(false);
   const uploadRef = useRef<HTMLInputElement>(null);
   const listRequestIdRef = useRef(0);
   const mountedRef = useRef(true);
@@ -179,9 +219,12 @@ export function FileManager({ hostId }: { hostId: string }) {
   return (
     <aside className="file-manager">
       <div className="terminal-pane-heading">
-        <div>
+        <div className="file-heading-content">
           <strong>远程文件</strong>
-          <span className="mono">{path}</span>
+          <Breadcrumb
+            className="path-breadcrumb"
+            items={breadcrumbItems(path, (target) => void navigate(target))}
+          />
         </div>
         <Tooltip title="刷新">
           <Button
@@ -202,6 +245,19 @@ export function FileManager({ hostId }: { hostId: string }) {
         <Button size="small" icon={<FolderAddOutlined />} onClick={createDirectory}>
           新建目录
         </Button>
+        <Badge
+          count={uploadQueue.summary.queued + uploadQueue.summary.uploading}
+          size="small"
+          overflowCount={99}
+        >
+          <Button
+            size="small"
+            icon={<ProfileOutlined />}
+            onClick={() => setUploadTasksOpen(true)}
+          >
+            任务
+          </Button>
+        </Badge>
         <input
           hidden
           multiple
@@ -209,17 +265,14 @@ export function FileManager({ hostId }: { hostId: string }) {
           type="file"
           onChange={(event) => {
             const selected = Array.from(event.currentTarget.files ?? []);
-            if (selected.length) uploadQueue.enqueue(selected, path);
+            if (selected.length) {
+              uploadQueue.enqueue(selected, path);
+              setUploadTasksOpen(true);
+            }
             event.currentTarget.value = "";
           }}
         />
       </div>
-      <UploadTasks
-        tasks={uploadQueue.tasks}
-        summary={uploadQueue.summary}
-        onCancel={uploadQueue.cancel}
-        onCancelAll={uploadQueue.cancelAll}
-      />
       <Input
         aria-label="Remote path"
         className="path-bar mono"
@@ -227,7 +280,7 @@ export function FileManager({ hostId }: { hostId: string }) {
         onChange={(event) => setPathDraft(event.target.value)}
         onPressEnter={() => void navigate(pathDraft)}
       />
-      <Spin spinning={loading}>
+      <Spin wrapperClassName="file-list-loading" spinning={loading}>
         <div className="file-list">
           {path !== "/" && (
             <button
@@ -250,7 +303,9 @@ export function FileManager({ hostId }: { hostId: string }) {
             >
               {entry.type === "directory" ? <FolderOpenOutlined /> : <FileOutlined />}
               <span title={entry.name}>{entry.name}</span>
-              <small>{entry.type === "file" ? `${Math.ceil(entry.size / 1024)} KB` : ""}</small>
+              <small>
+                {entry.type === "file" ? formatFileSize(entry.size) : ""}
+              </small>
               <Space size={2} className="file-row-actions">
                 {entry.type === "file" && (
                   <Button
@@ -279,6 +334,21 @@ export function FileManager({ hostId }: { hostId: string }) {
           {!loading && !entries.length && <div className="terminal-empty">目录为空</div>}
         </div>
       </Spin>
+      <Drawer
+        title="上传任务"
+        placement="right"
+        width={420}
+        open={uploadTasksOpen}
+        onClose={() => setUploadTasksOpen(false)}
+      >
+        <UploadTasks
+          tasks={uploadQueue.tasks}
+          summary={uploadQueue.summary}
+          onCancel={uploadQueue.cancel}
+          onCancelAll={uploadQueue.cancelAll}
+          onClearSettled={uploadQueue.clearSettled}
+        />
+      </Drawer>
     </aside>
   );
 }

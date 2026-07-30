@@ -1,4 +1,5 @@
 from typing import Any
+from unittest.mock import Mock
 
 import asyncssh
 import pytest
@@ -85,6 +86,40 @@ def test_only_one_current_node_host_is_allowed(client):
 
     assert duplicate.status_code == 409
     assert duplicate.json()["code"] == "LOCAL_HOST_EXISTS"
+
+
+def test_host_probe_settings_are_persisted_and_reschedule_immediately(client):
+    headers = auth_headers(client)
+    scheduler = client.app.state.host_probe_scheduler
+    scheduler.reschedule = Mock()
+
+    default = client.get("/api/v1/hosts/probe-settings", headers=headers)
+    updated = client.put(
+        "/api/v1/hosts/probe-settings",
+        headers=headers,
+        json={"interval_minutes": 10},
+    )
+    persisted = client.get("/api/v1/hosts/probe-settings", headers=headers)
+
+    assert default.status_code == 200
+    assert default.json() == {"interval_minutes": 5}
+    assert updated.status_code == 200
+    assert updated.json() == {"interval_minutes": 10}
+    assert persisted.json() == {"interval_minutes": 10}
+    scheduler.reschedule.assert_called_once_with()
+
+
+@pytest.mark.parametrize("interval", [0, 1441, 1.5])
+def test_host_probe_interval_rejects_values_outside_integer_range(client, interval):
+    headers = auth_headers(client)
+
+    response = client.put(
+        "/api/v1/hosts/probe-settings",
+        headers=headers,
+        json={"interval_minutes": interval},
+    )
+
+    assert response.status_code == 422
 
 
 def test_first_seen_fingerprint_requires_trust_and_changed_key_is_rejected(client):

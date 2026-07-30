@@ -124,6 +124,11 @@ button, input { font: inherit; }
 .metric-card span { display: block; margin-top: 14px; color: var(--text-muted); font-size: 11px; }
 .metric-card.warning > .anticon { color: #f6c85f; }
 .content-card { overflow: hidden; border-radius: 12px; }
+.host-probe-settings {
+  display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px;
+}
+.host-probe-settings strong { display: block; margin-bottom: 5px; }
+.host-probe-settings p { margin: 0; color: var(--text-muted); font-size: 12px; }
 .section-heading { display: flex; justify-content: space-between; padding: 22px 24px; border-bottom: 1px solid var(--border-soft); }
 .section-heading h2 { margin: 0 0 5px; font-size: 17px; }
 .section-heading p { margin: 0; font-size: 12px; }
@@ -172,7 +177,10 @@ button, input { font: inherit; }
 }
 .server-switcher, .file-manager { min-width: 0; background: #101827; }
 .server-switcher { border-right: 1px solid #24324a; }
-.file-manager { border-left: 1px solid #24324a; }
+.file-manager {
+  display: flex; min-height: 0; overflow: hidden; border-left: 1px solid #24324a;
+  flex-direction: column;
+}
 .terminal-pane-heading, .terminal-toolbar {
   display: flex; align-items: center; justify-content: space-between;
   height: 62px; padding: 0 16px; border-bottom: 1px solid #24324a;
@@ -182,6 +190,21 @@ button, input { font: inherit; }
   max-width: 250px; overflow: hidden; color: #63738d; font-size: 10px;
   text-overflow: ellipsis; white-space: nowrap;
 }
+.file-heading-content { min-width: 0; }
+.path-breadcrumb {
+  max-width: 250px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  white-space: nowrap;
+}
+.path-breadcrumb::-webkit-scrollbar { display: none; }
+.path-breadcrumb .ant-breadcrumb-link, .path-breadcrumb .ant-breadcrumb-separator {
+  color: #63738d;
+  font-size: 10px;
+}
+.path-breadcrumb-link {
+  max-width: 90px; padding: 0; overflow: hidden; border: 0; color: #8eaeff;
+  background: transparent; text-overflow: ellipsis; vertical-align: bottom; cursor: pointer;
+}
+.path-breadcrumb-link:hover { color: #b8caff; text-decoration: underline; }
 .server-search { padding: 13px; border-bottom: 1px solid #1d293d; }
 .server-list { padding: 8px; }
 .server-item, .file-row {
@@ -210,13 +233,18 @@ button, input { font: inherit; }
 .xterm-container .xterm { height: 100%; }
 .terminal-empty { padding: 28px 16px; color: #63738d; text-align: center; font-size: 12px; }
 .terminal-empty.large { display: grid; place-content: center; height: 100%; }
-.file-actions { display: flex; gap: 7px; padding: 10px 12px; border-bottom: 1px solid #1d293d; }
+.file-actions {
+  display: flex; gap: 7px; align-items: center; padding: 10px 12px;
+  border-bottom: 1px solid #1d293d;
+}
 .path-bar {
   display: block; width: 100%; padding: 10px 13px; overflow: hidden; color: #8eaeff;
   border: 0; border-bottom: 1px solid #1d293d; background: transparent;
   font-size: 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
 }
-.file-list { padding: 7px; }
+.file-list-loading { min-height: 0; flex: 1; overflow: hidden; }
+.file-list-loading > .ant-spin-container { height: 100%; min-height: 0; }
+.file-list { height: 100%; min-height: 0; padding: 7px; overflow-y: auto; }
 .file-row {
   display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; gap: 8px;
   align-items: center; min-height: 35px; padding: 4px 6px; border-radius: 6px; text-align: left;
@@ -226,6 +254,17 @@ button, input { font: inherit; }
 .file-row > small { color: #63738d; font-size: 9px; }
 .file-row-actions { visibility: hidden; }
 .file-row:hover .file-row-actions { visibility: visible; }
+.upload-tasks > .ant-space:first-child {
+  display: flex; justify-content: space-between; margin-bottom: 8px;
+}
+.upload-task { margin-top: 14px; }
+.upload-task > .ant-space {
+  display: flex; justify-content: space-between;
+}
+.upload-task > .ant-space .ant-space-item:first-child {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.upload-task small { color: var(--error-text); }
 .task-target-card {
   margin-bottom: 12px; padding: 16px; border: 1px solid var(--border-soft);
   border-radius: 8px; background: var(--panel-soft);
@@ -249,5 +288,6 @@ button, input { font: inherit; }
   .app-sider + .ant-layout { margin-left: 0; }
   .app-content { padding: 20px; }
   .metric-grid { grid-template-columns: 1fr; }
+  .host-probe-settings { align-items: flex-start; flex-direction: column; }
   .page-header { align-items: start; flex-direction: column; gap: 18px; }
 }

@@ -5,11 +5,14 @@ from app.models.host import Host
 from app.schemas.host import (
     FingerprintTrust,
     HostCreate,
+    HostProbeSettingInput,
+    HostProbeSettingResponse,
     HostResponse,
     HostUpdate,
     SSHTestResponse,
 )
 from app.services.crypto import CredentialCipher
+from app.services.host_probe import HostProbeSettingsService
 from app.services.hosts import HostService
 
 router = APIRouter(prefix="/hosts", tags=["hosts"])
@@ -26,6 +29,33 @@ def service(request: Request, session: SessionDep) -> HostService:
 @router.get("", response_model=list[HostResponse])
 async def list_hosts(request: Request, session: SessionDep, _: CurrentUserDep) -> list[Host]:
     return await service(request, session).list()
+
+
+@router.get("/probe-settings", response_model=HostProbeSettingResponse)
+async def get_probe_settings(
+    request: Request,
+    session: SessionDep,
+    _: CurrentUserDep,
+) -> object:
+    return await HostProbeSettingsService(
+        session,
+        request.app.state.settings.host_probe_interval_minutes,
+    ).get()
+
+
+@router.put("/probe-settings", response_model=HostProbeSettingResponse)
+async def update_probe_settings(
+    data: HostProbeSettingInput,
+    request: Request,
+    session: SessionDep,
+    _: CurrentUserDep,
+) -> object:
+    setting = await HostProbeSettingsService(
+        session,
+        request.app.state.settings.host_probe_interval_minutes,
+    ).update(data.interval_minutes)
+    request.app.state.host_probe_scheduler.reschedule()
+    return setting
 
 
 @router.post("", response_model=HostResponse, status_code=status.HTTP_201_CREATED)

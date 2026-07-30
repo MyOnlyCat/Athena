@@ -8,6 +8,7 @@ interface UploadTasksProps {
   summary: UploadSummary;
   onCancel: (id: string) => void;
   onCancelAll: () => void;
+  onClearSettled: () => void;
 }
 
 function taskPercent(task: UploadTask) {
@@ -19,11 +20,15 @@ export function UploadTasks({
   tasks,
   summary,
   onCancel,
-  onCancelAll
+  onCancelAll,
+  onClearSettled
 }: UploadTasksProps) {
-  if (!tasks.length) return null;
+  if (!tasks.length) {
+    return <div className="terminal-empty">暂无上传任务</div>;
+  }
 
   const canCancel = summary.queued + summary.uploading > 0;
+  const canClear = summary.completed + summary.failed + summary.cancelled > 0;
   return (
     <section aria-label="Upload tasks" className="upload-tasks">
       <Space>
@@ -34,6 +39,11 @@ export function UploadTasks({
         {canCancel && (
           <Button size="small" danger onClick={onCancelAll}>
             全部取消
+          </Button>
+        )}
+        {canClear && (
+          <Button size="small" onClick={onClearSettled}>
+            清除已结束
           </Button>
         )}
       </Space>

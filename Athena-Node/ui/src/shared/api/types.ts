@@ -39,6 +39,10 @@ export interface SSHTestResult {
   fingerprint: string | null;
 }
 
+export interface HostProbeSetting {
+  interval_minutes: number;
+}
+
 export interface DeploymentTarget {
   id: string;
   target_ip: string;
