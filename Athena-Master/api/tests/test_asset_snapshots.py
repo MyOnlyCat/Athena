@@ -1,10 +1,12 @@
+import asyncio
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
-from httpx import AsyncClient
+from httpx import AsyncByteStream, AsyncClient
 from sqlalchemy import insert, text
 
 from app.models.asset import HostAsset
@@ -17,6 +19,20 @@ from tests.test_heartbeats import (
 )
 
 HOST_ID = "019fae08-0ab1-7da1-9d22-612a0c5bb9ed"
+
+
+class PausedRequestBody(AsyncByteStream):
+    def __init__(self, body: bytes, first_chunk_sent: asyncio.Event, resume: asyncio.Event) -> None:
+        self.body = body
+        self.first_chunk_sent = first_chunk_sent
+        self.resume = resume
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        midpoint = len(self.body) // 2
+        yield self.body[:midpoint]
+        self.first_chunk_sent.set()
+        await self.resume.wait()
+        yield self.body[midpoint:]
 
 
 def heartbeat_with_hosts(hosts: list[dict[str, object]]) -> bytes:
@@ -409,6 +425,56 @@ async def test_snapshot_accepts_five_hundred_hosts_and_rejects_more_atomically(
 
     assert rejected.status_code == 422
     assert rejected.json()["code"] == "NODE_PAYLOAD_INVALID"
+    assert assets.json()["total"] == 500
+
+
+@pytest.mark.asyncio
+async def test_large_snapshot_does_not_hold_a_transaction_while_body_is_streaming(
+    client: AsyncClient,
+) -> None:
+    admin_headers = await approve_node(client)
+    body = heartbeat_with_hosts(
+        [
+            reported_host(
+                id=str(UUID(int=index + 1)),
+                name=f"streamed-{index:03d}",
+                address=f"10.{index // 256}.{index % 256}.2",
+                is_local=index == 0,
+            )
+            for index in range(500)
+        ]
+    )
+    first_chunk_sent = asyncio.Event()
+    resume = asyncio.Event()
+    headers = signed_headers(body=body)
+    headers["Content-Length"] = str(len(body))
+    heartbeat_task = asyncio.create_task(
+        client.post(
+            HEARTBEAT_PATH,
+            content=PausedRequestBody(body, first_chunk_sent, resume),
+            headers=headers,
+        )
+    )
+    await asyncio.wait_for(first_chunk_sent.wait(), timeout=1)
+
+    administrator = await client.post(
+        "/api/v1/administrators",
+        headers=admin_headers,
+        json={
+            "username": "snapshot-reviewer",
+            "password": "SnapshotReviewer123",
+        },
+    )
+    resume.set()
+    heartbeat = await heartbeat_task
+    assets = await client.get(
+        f"/api/v1/nodes/{NODE_ID}/assets",
+        headers=admin_headers,
+        params={"lifecycle_status": "active", "page_size": 100},
+    )
+
+    assert administrator.status_code == 201
+    assert heartbeat.status_code == 200
     assert assets.json()["total"] == 500
 
 
