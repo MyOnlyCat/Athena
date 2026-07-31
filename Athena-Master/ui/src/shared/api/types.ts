@@ -24,7 +24,8 @@ export interface RegistrationApplication {
   reported_name: string;
   hostname: string;
   software_version: string;
-  status: "pending" | "approved";
+  status: "pending" | "approved" | "rejected" | "expired" | "restored";
+  rejection_reason?: string;
   identity_verified: boolean;
   received_at: string;
 }

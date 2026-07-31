@@ -25,20 +25,33 @@ Master 管理接口均要求管理员 Bearer Token：
 | --- | --- | --- |
 | `GET` | `/api/v1/registration-applications` | 服务端分页列出申请 |
 | `POST` | `/api/v1/registration-applications/{id}/approve` | 输入同一 Node Token 并批准 |
+| `POST` | `/api/v1/registration-applications/{id}/reject` | 拒绝申请，可附带原因 |
+| `POST` | `/api/v1/registration-applications/{id}/restore` | 恢复已拒绝身份的申请资格 |
 
 审批时 Master 使用保存的原始 body 和认证头重新计算 HMAC，不重新序列化 JSON。
 Token 不匹配时返回 `401 REGISTRATION_TOKEN_INVALID`，申请保持待审批。验证成功后
-创建已启用接入节点，并使用 `ATHENA_MASTER_CREDENTIAL_KEY` 加密保存 Token。
-Token 明文、密文都不会通过 API 返回。
+创建已启用接入节点，并使用 `ATHENA_MASTER_CREDENTIAL_KEY` 加密保存 Token，同时
+保存不可逆 HMAC-SHA256 指纹来保证 Token 全局唯一。重复 Token 返回
+`409 REGISTRATION_TOKEN_DUPLICATE`，且不泄露关联节点。Token 明文、密文及可用于
+认证的派生值都不会通过 API 返回。
+
+待审批申请七天后自动标记为 `expired`，不能再批准；已拒绝和已过期申请在状态变更
+30 天后由后台维护任务清理，正式接入节点不会被物理删除。同一 Node ID 被拒绝后，
+提交返回 `409 REGISTRATION_REJECTED`；管理员恢复原申请后，Node 管理员必须手动
+重新提交。每个 Node ID 每分钟最多提交一次，每个来源 IP 每分钟最多十次；最多保留
+1,000 条待审批申请。超限分别返回 `429 REGISTRATION_RATE_LIMITED` 或
+`429 REGISTRATION_CAPACITY_REACHED`，且不创建部分记录。
 
 Node 在本地处于待审批状态时，定期调用：
 
 `POST /api/node/v1/registration-applications/status`
 
-请求正文为 `{}`，并使用节点 Token 生成 HMAC 认证头。Master 仅在节点已经获批且
-签名与加密保存的 Token 匹配时返回 `{"status":"approved"}`；审批前返回
-`404 NODE_NOT_APPROVED`，Token 不匹配返回 `401 REGISTRATION_TOKEN_INVALID`。
-Node 将成功结果持久化为 `approved`，因此审批状态同步不需要 Master 回连。
+请求正文为 `{}`，并使用节点 Token 生成 HMAC 认证头。未批准时 Master 根据最新申请
+返回 `pending`、`rejected`、`expired` 或 `restored`；批准后仅在签名与加密保存的
+Token 匹配时返回 `approved`，Token 不匹配返回
+`401 REGISTRATION_TOKEN_INVALID`。Node 持久化返回状态：`pending` 每 60 秒主动
+查询；`rejected` 停止自动申请；`expired` 和 `restored` 提示管理员手动重新提交。
+状态同步始终由 Node 发起，不需要 Master 回连。
 
 ## 节点认证
 
@@ -121,7 +134,8 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
 保存不要求 Node 已获批准或心跳成功，因此可以先持久化配置再申请接入；连接测试仍是
 独立且不保存的操作。页面表单有未保存修改时禁用“申请接入”，申请接口只读取已保存
 配置。候选准备或数据库提交失败时不替换旧运行时，数据库提交失败时还会清理候选资源。
-`registration_status` 为 `not_submitted`、`pending` 或 `approved`，
+`registration_status` 为 `not_submitted`、`pending`、`approved`、`rejected`、
+`expired` 或 `restored`，
 `runtime_status` 为 `unconfigured`、`connecting`、`online`、`error` 或 `stopped`。
 
 ## 心跳与完整主机清单

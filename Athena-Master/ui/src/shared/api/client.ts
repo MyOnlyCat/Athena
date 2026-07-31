@@ -82,5 +82,20 @@ export const registrationApplicationsApi = {
         token
       })
     ).data;
+  },
+  async reject(id: string, reason?: string) {
+    return (
+      await api.post<RegistrationApplicationPage["items"][number]>(
+        `/registration-applications/${id}/reject`,
+        { reason: reason || null }
+      )
+    ).data;
+  },
+  async restore(id: string) {
+    return (
+      await api.post<RegistrationApplicationPage["items"][number]>(
+        `/registration-applications/${id}/restore`
+      )
+    ).data;
   }
 };

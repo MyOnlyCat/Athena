@@ -219,8 +219,10 @@ async def synchronize_registration_status(
     row = await settings_service.get_row()
     if row is None or row.registration_status != "pending":
         return RegistrationStatusResponse(
-            status="approved"
-            if row is not None and row.registration_status == "approved"
+            status=row.registration_status
+            if row is not None and row.registration_status in {
+                "approved", "rejected", "expired", "restored"
+            }
             else "pending"
         )
     config = await settings_service.get_effective()
@@ -237,7 +239,8 @@ async def synchronize_registration_status(
         return RegistrationStatusResponse(status="pending")
     finally:
         await client.close()
-    if result.get("status") == "approved":
-        await settings_service.set_registration_status("approved")
-        return RegistrationStatusResponse(status="approved")
+    remote_status = result.get("status")
+    if remote_status in {"approved", "rejected", "expired", "restored"}:
+        await settings_service.set_registration_status(remote_status)
+        return RegistrationStatusResponse(status=remote_status)
     return RegistrationStatusResponse(status="pending")

@@ -1,6 +1,8 @@
+import asyncio
 from asyncio import Lock
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -24,6 +26,7 @@ from app.core.errors import (
     validation_error_handler,
 )
 from app.services.auth import AuthService, LoginThrottle
+from app.services.registrations import RegistrationService, registration_maintenance_loop
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -32,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine = create_engine(active_settings)
+        maintenance_task: asyncio.Task[None] | None = None
         app.state.db_engine = engine
         app.state.session_factory = create_session_factory(engine)
         try:
@@ -50,8 +54,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             active_settings.bootstrap_username,
                             active_settings.bootstrap_password,
                         )
+            async with registration_write_lock:
+                async with app.state.session_factory() as session:
+                    registrations = RegistrationService(
+                        session,
+                        active_settings.credential_key,
+                    )
+                    await registrations.backfill_token_fingerprints()
+                    await registrations.maintain(datetime.now(UTC))
+            maintenance_task = asyncio.create_task(
+                registration_maintenance_loop(
+                    app.state.session_factory,
+                    active_settings.credential_key,
+                    registration_write_lock,
+                ),
+                name="registration-maintenance",
+            )
             yield
         finally:
+            if maintenance_task is not None:
+                maintenance_task.cancel()
+                try:
+                    await maintenance_task
+                except asyncio.CancelledError:
+                    pass
             await engine.dispose()
 
     app = FastAPI(
@@ -63,6 +89,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.login_throttle = LoginThrottle()
     administrator_write_lock = Lock()
     app.state.administrator_write_lock = administrator_write_lock
+    registration_write_lock = Lock()
+    app.state.registration_write_lock = registration_write_lock
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(HTTPException, http_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(
