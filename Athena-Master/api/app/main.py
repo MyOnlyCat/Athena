@@ -26,7 +26,11 @@ from app.core.errors import (
     validation_error_handler,
 )
 from app.services.auth import AuthService, LoginThrottle
-from app.services.registrations import RegistrationService, registration_maintenance_loop
+from app.services.registrations import (
+    RegistrationService,
+    RegistrationThrottle,
+    registration_maintenance_loop,
+)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -91,6 +95,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.administrator_write_lock = administrator_write_lock
     registration_write_lock = Lock()
     app.state.registration_write_lock = registration_write_lock
+    app.state.registration_throttle = RegistrationThrottle()
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(HTTPException, http_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(

@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
 import hmac
+from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import AppError
@@ -31,11 +33,49 @@ def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=value.tzinfo or UTC).astimezone(UTC)
 
 
+class RegistrationThrottle:
+    def __init__(self) -> None:
+        self._node_attempts: dict[str, deque[datetime]] = defaultdict(deque)
+        self._ip_attempts: dict[str, deque[datetime]] = defaultdict(deque)
+
+    @staticmethod
+    def _prune(attempts: deque[datetime], cutoff: datetime) -> None:
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+
+    def check_and_record(
+        self,
+        *,
+        node_id: str,
+        source_ip: str | None,
+        now: datetime,
+    ) -> None:
+        cutoff = now - timedelta(seconds=NODE_RATE_WINDOW_SECONDS)
+        node_attempts = self._node_attempts[node_id]
+        ip_attempts = self._ip_attempts[source_ip or "<unknown>"]
+        self._prune(node_attempts, cutoff)
+        self._prune(ip_attempts, cutoff)
+        if len(node_attempts) >= 1 or len(ip_attempts) >= IP_RATE_LIMIT:
+            raise AppError(
+                "REGISTRATION_RATE_LIMITED",
+                "注册申请过于频繁，请稍后重试",
+                status_code=429,
+            )
+        node_attempts.append(now)
+        ip_attempts.append(now)
+
+
 class RegistrationService:
-    def __init__(self, session: AsyncSession, credential_key: str) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        credential_key: str,
+        throttle: RegistrationThrottle | None = None,
+    ) -> None:
         self.session = session
         self.cipher = CredentialCipher(credential_key)
         self.credential_key = credential_key
+        self.throttle = throttle
 
     def _token_fingerprint(self, token: str) -> str:
         return hmac.new(
@@ -71,10 +111,27 @@ class RegistrationService:
                 )
             ).all()
         )
+        fingerprints = {
+            fingerprint
+            for fingerprint in (
+                await self.session.scalars(
+                    select(AccessNode.token_fingerprint).where(
+                        AccessNode.token_fingerprint.is_not(None)
+                    )
+                )
+            ).all()
+            if fingerprint is not None
+        }
         for node in nodes:
-            node.token_fingerprint = self._token_fingerprint(
+            fingerprint = self._token_fingerprint(
                 self.cipher.decrypt(node.encrypted_token)
             )
+            if fingerprint in fingerprints:
+                raise RuntimeError(
+                    "数据库中存在重复的 Node Token，必须先为受影响节点配置不同 Token"
+                )
+            fingerprints.add(fingerprint)
+            node.token_fingerprint = fingerprint
         await self.session.commit()
 
     async def _latest_application(self, node_id: str) -> RegistrationApplication | None:
@@ -130,41 +187,19 @@ class RegistrationService:
                 status_code=401,
             )
         await self.maintain(received_at)
+        if self.throttle is None:
+            raise RuntimeError("registration throttle is not configured")
+        self.throttle.check_and_record(
+            node_id=payload.node_id,
+            source_ip=source_ip,
+            now=received_at,
+        )
         latest = await self._latest_application(payload.node_id)
         if latest is not None and latest.status == "rejected":
             raise AppError(
                 "REGISTRATION_REJECTED",
                 "接入申请已被拒绝，请联系管理员恢复后手动重试",
                 status_code=409,
-            )
-        rate_cutoff = received_at - timedelta(seconds=NODE_RATE_WINDOW_SECONDS)
-        recent_node_count = int(
-            await self.session.scalar(
-                select(func.count())
-                .select_from(RegistrationApplication)
-                .where(
-                    RegistrationApplication.node_id == payload.node_id,
-                    RegistrationApplication.received_at > rate_cutoff,
-                )
-            )
-            or 0
-        )
-        recent_ip_count = int(
-            await self.session.scalar(
-                select(func.count())
-                .select_from(RegistrationApplication)
-                .where(
-                    RegistrationApplication.source_ip == source_ip,
-                    RegistrationApplication.received_at > rate_cutoff,
-                )
-            )
-            or 0
-        )
-        if recent_node_count >= 1 or recent_ip_count >= IP_RATE_LIMIT:
-            raise AppError(
-                "REGISTRATION_RATE_LIMITED",
-                "注册申请过于频繁，请稍后重试",
-                status_code=429,
             )
         pending_count = int(
             await self.session.scalar(
@@ -350,7 +385,22 @@ class RegistrationService:
         application.status = "approved"
         application.status_changed_at = datetime.now(UTC)
         self.session.add(node)
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            token_owner = await self.session.scalar(
+                select(AccessNode.node_id).where(
+                    AccessNode.token_fingerprint == token_fingerprint
+                )
+            )
+            if token_owner is not None:
+                raise AppError(
+                    "REGISTRATION_TOKEN_DUPLICATE",
+                    "Token 已被其他接入节点使用",
+                    status_code=409,
+                ) from None
+            raise
         await self.session.refresh(node)
         return node
 

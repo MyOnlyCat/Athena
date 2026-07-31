@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 
 from app.services.crypto import CredentialCipher
+from app.services.registrations import RegistrationThrottle
 
 
 async def login_headers(client: AsyncClient) -> dict[str, str]:
@@ -343,10 +344,20 @@ async def test_rejected_node_cannot_reapply_until_an_administrator_restores_it(
         token,
         nonce="11111111111111111111111111111111",
     )
+    app.state.registration_throttle = RegistrationThrottle()
     blocked_retry = await client.post(
         "/api/node/v1/registration-applications",
         content=retry_body,
         headers=retry_headers,
+    )
+    second_retry_body, second_retry_headers = signed_registration(
+        token,
+        nonce="12121212121212121212121212121212",
+    )
+    rate_limited_retry = await client.post(
+        "/api/node/v1/registration-applications",
+        content=second_retry_body,
+        headers=second_retry_headers,
     )
 
     assert rejected.status_code == 200
@@ -355,6 +366,8 @@ async def test_rejected_node_cannot_reapply_until_an_administrator_restores_it(
     assert node_status.json() == {"status": "rejected"}
     assert blocked_retry.status_code == 409
     assert blocked_retry.json()["code"] == "REGISTRATION_REJECTED"
+    assert rate_limited_retry.status_code == 429
+    assert rate_limited_retry.json()["code"] == "REGISTRATION_RATE_LIMITED"
 
     restored = await client.post(
         f"/api/v1/registration-applications/{application_id}/restore",
@@ -372,6 +385,7 @@ async def test_rejected_node_cannot_reapply_until_an_administrator_restores_it(
             },
         )
         await session.commit()
+    app.state.registration_throttle = RegistrationThrottle()
     accepted_retry = await client.post(
         "/api/node/v1/registration-applications",
         content=retry_body,
@@ -500,6 +514,36 @@ async def test_registration_enforces_node_ip_rate_limits_and_pending_capacity(
     )
     assert full.status_code == 429
     assert full.json()["code"] == "REGISTRATION_CAPACITY_REACHED"
+    async with app.state.session_factory() as session:
+        count_after_capacity_failure = (
+            await session.execute(text("SELECT count(*) FROM registration_applications"))
+        ).scalar_one()
+    assert count_after_capacity_failure == 1_000
+
+    for index in range(8):
+        failed_body, failed_headers = signed_registration(
+            token,
+            node_id=f"018f47a2-4b5c-7def-9123-{index:012x}",
+            nonce=f"{index + 100:032x}",
+        )
+        failed = await client.post(
+            "/api/node/v1/registration-applications",
+            content=failed_body,
+            headers=failed_headers,
+        )
+        assert failed.json()["code"] == "REGISTRATION_CAPACITY_REACHED"
+    limited_body, limited_headers = signed_registration(
+        token,
+        node_id="018f47a2-4b5c-7def-a123-456789abcdef",
+        nonce="77777777777777777777777777777777",
+    )
+    limited_after_failures = await client.post(
+        "/api/node/v1/registration-applications",
+        content=limited_body,
+        headers=limited_headers,
+    )
+    assert limited_after_failures.status_code == 429
+    assert limited_after_failures.json()["code"] == "REGISTRATION_RATE_LIMITED"
 
 
 @pytest.mark.asyncio

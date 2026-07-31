@@ -53,6 +53,12 @@ Token 匹配时返回 `approved`，Token 不匹配返回
 查询；`rejected` 停止自动申请；`expired` 和 `restored` 提示管理员手动重新提交。
 状态同步始终由 Node 发起，不需要 Master 回连。
 
+由于两阶段审批前 Master 尚未持有 Token，未批准节点的状态查询只能校验认证头格式和
+时间窗口，不能验证 HMAC；返回的生命周期状态不构成节点身份认证。批准后的状态查询
+必须通过 HMAC 验证。部署从旧版本升级时会为已有 Token 回填指纹；若历史数据已存在
+重复 Token，Master 会拒绝启动并要求先为受影响节点配置不同 Token，不会静默接受或
+泄露 Token。
+
 ## 节点认证
 
 每个子节点在主节点配置唯一 `node_id` 和共享 `node_token`。所有请求包含：

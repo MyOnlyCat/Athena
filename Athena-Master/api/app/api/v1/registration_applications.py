@@ -23,7 +23,11 @@ admin_router = APIRouter(
 
 
 def service(request: Request, session: SessionDep) -> RegistrationService:
-    return RegistrationService(session, request.app.state.settings.credential_key)
+    return RegistrationService(
+        session,
+        request.app.state.settings.credential_key,
+        request.app.state.registration_throttle,
+    )
 
 
 @node_router.post(
