@@ -250,3 +250,63 @@ async def test_registration_rejects_stale_timestamp_and_header_body_identity_mis
     assert stale.json()["code"] == "NODE_TIMESTAMP_INVALID"
     assert mismatch.status_code == 422
     assert mismatch.json()["code"] == "REGISTRATION_IDENTITY_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_approval_rechecks_the_stored_registration_time_window(
+    client: AsyncClient,
+    app: FastAPI,
+) -> None:
+    token = "registration-secret-token-value-123"
+    body, headers = signed_registration(token)
+    submitted = await client.post(
+        "/api/node/v1/registration-applications",
+        content=body,
+        headers=headers,
+    )
+    stale_received_at = datetime.fromtimestamp(
+        int(headers["X-Timestamp"]) - 600,
+        UTC,
+    )
+    async with app.state.session_factory() as session:
+        application_id = (
+            await session.execute(
+                text("SELECT id FROM registration_applications")
+            )
+        ).scalar_one()
+        await session.execute(
+            text(
+                "UPDATE registration_applications "
+                "SET received_at = :received_at WHERE id = :application_id"
+            ),
+            {
+                "received_at": stale_received_at.isoformat(sep=" "),
+                "application_id": application_id,
+            },
+        )
+        await session.commit()
+
+    approval = await client.post(
+        f"/api/v1/registration-applications/{application_id}/approve",
+        headers=await login_headers(client),
+        json={"token": token},
+    )
+    async with app.state.session_factory() as session:
+        application_status = (
+            await session.execute(
+                text(
+                    "SELECT status FROM registration_applications "
+                    "WHERE id = :application_id"
+                ),
+                {"application_id": application_id},
+            )
+        ).scalar_one()
+        access_node_count = (
+            await session.execute(text("SELECT count(*) FROM access_nodes"))
+        ).scalar_one()
+
+    assert submitted.status_code == 202
+    assert approval.status_code == 401
+    assert approval.json()["code"] == "NODE_TIMESTAMP_INVALID"
+    assert application_status == "pending"
+    assert access_node_count == 0
