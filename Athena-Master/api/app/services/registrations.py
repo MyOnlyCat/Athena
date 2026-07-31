@@ -37,11 +37,42 @@ class RegistrationThrottle:
     def __init__(self) -> None:
         self._node_attempts: dict[str, deque[datetime]] = defaultdict(deque)
         self._ip_attempts: dict[str, deque[datetime]] = defaultdict(deque)
+        self._last_cleanup: datetime | None = None
 
     @staticmethod
     def _prune(attempts: deque[datetime], cutoff: datetime) -> None:
         while attempts and attempts[0] <= cutoff:
             attempts.popleft()
+
+    def _cleanup(self, cutoff: datetime, now: datetime) -> None:
+        if (
+            self._last_cleanup is not None
+            and now - self._last_cleanup < timedelta(seconds=NODE_RATE_WINDOW_SECONDS)
+        ):
+            return
+        for buckets in (self._node_attempts, self._ip_attempts):
+            for key, attempts in list(buckets.items()):
+                self._prune(attempts, cutoff)
+                if not attempts:
+                    del buckets[key]
+        self._last_cleanup = now
+
+    def _record(
+        self,
+        buckets: dict[str, deque[datetime]],
+        key: str,
+        *,
+        limit: int,
+        cutoff: datetime,
+        now: datetime,
+    ) -> bool:
+        attempts = buckets[key]
+        self._prune(attempts, cutoff)
+        limited = len(attempts) >= limit
+        attempts.append(now)
+        while len(attempts) > limit:
+            attempts.popleft()
+        return limited
 
     def check_and_record(
         self,
@@ -51,18 +82,27 @@ class RegistrationThrottle:
         now: datetime,
     ) -> None:
         cutoff = now - timedelta(seconds=NODE_RATE_WINDOW_SECONDS)
-        node_attempts = self._node_attempts[node_id]
-        ip_attempts = self._ip_attempts[source_ip or "<unknown>"]
-        self._prune(node_attempts, cutoff)
-        self._prune(ip_attempts, cutoff)
-        if len(node_attempts) >= 1 or len(ip_attempts) >= IP_RATE_LIMIT:
+        self._cleanup(cutoff, now)
+        node_limited = self._record(
+            self._node_attempts,
+            node_id,
+            limit=1,
+            cutoff=cutoff,
+            now=now,
+        )
+        ip_limited = self._record(
+            self._ip_attempts,
+            source_ip or "<unknown>",
+            limit=IP_RATE_LIMIT,
+            cutoff=cutoff,
+            now=now,
+        )
+        if node_limited or ip_limited:
             raise AppError(
                 "REGISTRATION_RATE_LIMITED",
                 "注册申请过于频繁，请稍后重试",
                 status_code=429,
             )
-        node_attempts.append(now)
-        ip_attempts.append(now)
 
 
 class RegistrationService:

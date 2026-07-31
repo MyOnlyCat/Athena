@@ -520,7 +520,7 @@ async def test_registration_enforces_node_ip_rate_limits_and_pending_capacity(
         ).scalar_one()
     assert count_after_capacity_failure == 1_000
 
-    for index in range(8):
+    for index in range(7):
         failed_body, failed_headers = signed_registration(
             token,
             node_id=f"018f47a2-4b5c-7def-9123-{index:012x}",
@@ -612,3 +612,42 @@ async def test_registration_limits_a_source_ip_to_ten_submissions_per_minute(
     assert [response.status_code for response in responses[:10]] == [202] * 10
     assert responses[10].status_code == 429
     assert responses[10].json()["code"] == "REGISTRATION_RATE_LIMITED"
+
+
+@pytest.mark.asyncio
+async def test_node_limited_attempts_still_consume_the_source_ip_limit(
+    client: AsyncClient,
+) -> None:
+    token = "registration-secret-token-value-123"
+    node_id = "018f47a2-4b5c-7def-8123-456789abcdef"
+    responses = []
+    for index in range(10):
+        body, headers = signed_registration(
+            token,
+            node_id=node_id,
+            nonce=f"{index + 200:032x}",
+        )
+        responses.append(
+            await client.post(
+                "/api/node/v1/registration-applications",
+                content=body,
+                headers=headers,
+            )
+        )
+    other_body, other_headers = signed_registration(
+        token,
+        node_id="018f47a2-4b5c-7def-8123-456789abcdee",
+        nonce="88888888888888888888888888888888",
+    )
+    other_node = await client.post(
+        "/api/node/v1/registration-applications",
+        content=other_body,
+        headers=other_headers,
+    )
+
+    assert responses[0].status_code == 202
+    assert [response.json()["code"] for response in responses[1:]] == [
+        "REGISTRATION_RATE_LIMITED"
+    ] * 9
+    assert other_node.status_code == 429
+    assert other_node.json()["code"] == "REGISTRATION_RATE_LIMITED"
