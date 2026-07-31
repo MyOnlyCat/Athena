@@ -47,6 +47,7 @@ body {
     var(--page-bg);
 }
 button, input { font: inherit; }
+.mono { font-family: "JetBrains Mono", "Cascadia Code", monospace; }
 .muted, .page-header p { color: var(--text-secondary); }
 .eyebrow {
   margin: 0 0 8px;
@@ -196,6 +197,7 @@ button, input { font: inherit; }
 .page-header h1 { margin: 0 0 8px; font-size: 30px; }
 .page-header p { margin: 0; }
 .table-toolbar { margin-bottom: 18px; }
+.asset-section { margin-top: 24px; }
 .content-card {
   padding: 20px;
   background: var(--panel-bg);

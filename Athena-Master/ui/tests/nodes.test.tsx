@@ -75,7 +75,8 @@ test("shows the selected access node's read-only host assets", async () => {
   renderPage();
 
   expect(await screen.findByText("web-01")).toBeInTheDocument();
-  expect(screen.getByText("10.0.0.10:22")).toBeInTheDocument();
+  expect(screen.getByRole("radio")).toBeChecked();
+  expect(screen.getByText("10.0.0.10:22")).toHaveClass("mono");
   expect(screen.getByText("连接失败")).toBeInTheDocument();
   expect(screen.getByText("SSH_TIMEOUT")).toBeInTheDocument();
   expect(screen.getByText("在管")).toBeInTheDocument();
@@ -162,6 +163,23 @@ test("sends asset search, tag and status filters to the server", async () => {
     expect(apiMocks.listAssets).toHaveBeenLastCalledWith(
       expect.any(String),
       expect.objectContaining({ detection_status: "success" })
+    )
+  );
+
+});
+
+test("filters assets that have not been tested", async () => {
+  const user = userEvent.setup();
+  renderPage();
+  await screen.findByText("web-01");
+
+  await user.click(screen.getByRole("combobox", { name: "检测状态" }));
+  await user.click(await screen.findByText("尚未检测"));
+
+  await waitFor(() =>
+    expect(apiMocks.listAssets).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ detection_status: "untested" })
     )
   );
 });

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.time import as_utc
 
 HostTestStatus = Literal["success", "failed", "pending_trust"]
+HostDetectionFilter = Literal["success", "failed", "pending_trust", "untested"]
 HostTestCode = Literal[
     "SSH_CONNECTED",
     "SSH_AUTH_FAILED",

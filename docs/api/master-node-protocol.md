@@ -231,7 +231,7 @@ Master 严格拒绝未知字段、重复 host ID、字符串形式端口、非�
 | `page` / `page_size` | 服务端分页，`page_size` 最大 100 |
 | `search` | 搜索资产名称或地址 |
 | `lifecycle_status` | `active`（在管）或 `retired`（已退役） |
-| `detection_status` | `success`、`failed` 或 `pending_trust` |
+| `detection_status` | `success`、`failed`、`pending_trust` 或 `untested` |
 | `tag` | 按单个完整标签筛选 |
 
 响应保留最后检测状态、标准错误码和检测时间；时间使用 UTC RFC 3339，页面按浏览器

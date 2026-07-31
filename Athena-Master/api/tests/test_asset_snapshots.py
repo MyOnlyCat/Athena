@@ -271,6 +271,15 @@ async def test_asset_api_filters_by_lifecycle_search_tag_and_detection_status(
                 last_test_status="success",
                 last_test_code="SSH_CONNECTED",
             ),
+            reported_host(
+                id="019fae08-0ab1-7da1-9d22-612a0c5bb9ef",
+                name="untested-01",
+                address="10.0.0.30",
+                tags=["new"],
+                last_test_status=None,
+                last_test_code=None,
+                last_tested_at=None,
+            ),
         ]
     )
     assert (
@@ -298,6 +307,15 @@ async def test_asset_api_filters_by_lifecycle_search_tag_and_detection_status(
     assert filtered.json()["total"] == 1
     assert filtered.json()["items"][0]["host_id"] == HOST_ID
 
+    untested = await client.get(
+        f"/api/v1/nodes/{NODE_ID}/assets",
+        headers=admin_headers,
+        params={"detection_status": "untested"},
+    )
+    assert untested.status_code == 200
+    assert untested.json()["total"] == 1
+    assert untested.json()["items"][0]["name"] == "untested-01"
+
 
 @pytest.mark.asyncio
 async def test_snapshot_accepts_five_hundred_hosts_and_rejects_more_atomically(
@@ -323,11 +341,52 @@ async def test_snapshot_accepts_five_hundred_hosts_and_rejects_more_atomically(
     assert accepted.status_code == 200
 
     await allow_next_heartbeat(app)
+    replacement = [
+        reported_host(
+            id=str(host["id"]),
+            name=str(host["name"]),
+            address=f"172.16.{index // 256}.{index % 256}",
+            is_local=index == 0,
+        )
+        for index, host in enumerate(hosts[:250])
+    ] + [
+        reported_host(
+            id=str(UUID(int=1001 + index)),
+            name=f"replacement-{index:03d}",
+            address=f"172.17.{index // 256}.{index % 256}",
+            is_local=False,
+        )
+        for index in range(250)
+    ]
+    replacement_body = heartbeat_with_hosts(replacement)
+    replaced = await client.post(
+        HEARTBEAT_PATH,
+        content=replacement_body,
+        headers=signed_headers(
+            body=replacement_body,
+            nonce="44444444444444444444444444444444",
+        ),
+    )
+    active = await client.get(
+        f"/api/v1/nodes/{NODE_ID}/assets",
+        headers=admin_headers,
+        params={"lifecycle_status": "active", "page_size": 100},
+    )
+    retired = await client.get(
+        f"/api/v1/nodes/{NODE_ID}/assets",
+        headers=admin_headers,
+        params={"lifecycle_status": "retired", "page_size": 100},
+    )
+    assert replaced.status_code == 200
+    assert active.json()["total"] == 500
+    assert retired.json()["total"] == 250
+
+    await allow_next_heartbeat(app)
     too_many = heartbeat_with_hosts(
         [
-            *hosts,
+            *replacement,
             reported_host(
-                id=str(UUID(int=501)),
+                id=str(UUID(int=2001)),
                 name="host-500",
                 address="10.1.244.1",
                 is_local=False,
@@ -339,13 +398,13 @@ async def test_snapshot_accepts_five_hundred_hosts_and_rejects_more_atomically(
         content=too_many,
         headers=signed_headers(
             body=too_many,
-            nonce="44444444444444444444444444444444",
+            nonce="55555555555555555555555555555555",
         ),
     )
     assets = await client.get(
         f"/api/v1/nodes/{NODE_ID}/assets",
         headers=admin_headers,
-        params={"page_size": 100},
+        params={"lifecycle_status": "active", "page_size": 100},
     )
 
     assert rejected.status_code == 422

@@ -8,6 +8,7 @@ import type {
   AssetLifecycleStatus,
   ConnectivityStatus,
   HostAsset,
+  HostDetectionFilter,
   HostAssetListParams,
   HostTestStatus,
   ListedAccessNode,
@@ -46,6 +47,14 @@ function formatLocalTime(value: string | null): string {
   }).format(new Date(value));
 }
 
+function pageAfterPaginationChange(
+  nextPage: number,
+  nextPageSize: number,
+  currentPageSize: number
+): number {
+  return nextPageSize === currentPageSize ? nextPage : 1;
+}
+
 export function NodesPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -65,7 +74,7 @@ export function NodesPage() {
   const [assetSearchInput, setAssetSearchInput] = useState("");
   const [assetSearch, setAssetSearch] = useState("");
   const [assetLifecycle, setAssetLifecycle] = useState<AssetLifecycleStatus>();
-  const [assetDetection, setAssetDetection] = useState<HostTestStatus>();
+  const [assetDetection, setAssetDetection] = useState<HostDetectionFilter>();
   const [assetTagInput, setAssetTagInput] = useState("");
   const [assetTag, setAssetTag] = useState("");
 
@@ -195,15 +204,14 @@ export function NodesPage() {
           rowKey="node_id"
           dataSource={query.data?.items ?? []}
           loading={query.isLoading}
-          rowClassName={(node) =>
-            node.node_id === selectedNodeId ? "ant-table-row-selected" : ""
-          }
-          onRow={(node) => ({
-            onClick: () => {
-              setSelectedNodeId(node.node_id);
+          rowSelection={{
+            type: "radio",
+            selectedRowKeys: selectedNodeId ? [selectedNodeId] : [],
+            onChange: (keys) => {
+              setSelectedNodeId(String(keys[0]));
               setAssetPage(1);
             }
-          })}
+          }}
           pagination={{
             current: query.data?.page ?? page,
             pageSize: query.data?.page_size ?? pageSize,
@@ -211,7 +219,7 @@ export function NodesPage() {
             showSizeChanger: true,
             showTotal: (total) => `共 ${total} 个接入节点`,
             onChange: (nextPage, nextPageSize) => {
-              setPage(nextPageSize === pageSize ? nextPage : 1);
+              setPage(pageAfterPaginationChange(nextPage, nextPageSize, pageSize));
               setPageSize(nextPageSize);
             }
           }}
@@ -264,7 +272,7 @@ export function NodesPage() {
             }
           ]}
         />
-        <div style={{ marginTop: 32 }}>
+        <div className="asset-section">
           <h2>主机资产</h2>
           <p className="muted">资产由所选接入节点的完整心跳快照维护，此页面只读。</p>
           <Space wrap className="table-toolbar">
@@ -317,7 +325,8 @@ export function NodesPage() {
               options={[
                 { value: "success", label: "连接正常" },
                 { value: "failed", label: "连接失败" },
-                { value: "pending_trust", label: "待确认指纹" }
+                { value: "pending_trust", label: "待确认指纹" },
+                { value: "untested", label: "尚未检测" }
               ]}
               style={{ width: 140 }}
             />
@@ -333,7 +342,9 @@ export function NodesPage() {
               showSizeChanger: true,
               showTotal: (total) => `共 ${total} 个主机资产`,
               onChange: (nextPage, nextPageSize) => {
-                setAssetPage(nextPageSize === assetPageSize ? nextPage : 1);
+                setAssetPage(
+                  pageAfterPaginationChange(nextPage, nextPageSize, assetPageSize)
+                );
                 setAssetPageSize(nextPageSize);
               }
             }}
@@ -343,7 +354,7 @@ export function NodesPage() {
                 render: (_, asset) => (
                   <Space direction="vertical" size={0}>
                     <span className="primary-cell">{asset.name}</span>
-                    <span className="muted">{asset.address}:{asset.port}</span>
+                    <span className="muted mono">{asset.address}:{asset.port}</span>
                   </Space>
                 )
               },

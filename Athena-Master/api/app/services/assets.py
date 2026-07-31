@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.models.asset import HostAsset
 from app.models.registration import AccessNode
-from app.schemas.asset import HeartbeatHost, HostTestStatus
+from app.schemas.asset import AssetLifecycleStatus, HeartbeatHost, HostDetectionFilter
 
 MAX_ACTIVE_ASSETS = 10_000
 
@@ -72,8 +72,8 @@ class HostAssetQueryService:
         page: int,
         page_size: int,
         search: str | None,
-        lifecycle_status: str | None,
-        detection_status: HostTestStatus | None,
+        lifecycle_status: AssetLifecycleStatus | None,
+        detection_status: HostDetectionFilter | None,
         tag: str | None,
     ) -> tuple[list[HostAsset], int]:
         if await self.session.get(AccessNode, node_id) is None:
@@ -87,7 +87,9 @@ class HostAssetQueryService:
             filters.append(HostAsset.retired_at.is_(None))
         elif lifecycle_status == "retired":
             filters.append(HostAsset.retired_at.is_not(None))
-        if detection_status:
+        if detection_status == "untested":
+            filters.append(HostAsset.last_test_status.is_(None))
+        elif detection_status:
             filters.append(HostAsset.last_test_status == detection_status)
         if tag:
             filters.append(cast(HostAsset.tags, String).contains(f'"{tag.strip()}"'))

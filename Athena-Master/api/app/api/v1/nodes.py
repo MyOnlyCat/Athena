@@ -9,7 +9,7 @@ from app.schemas.asset import (
     AssetLifecycleStatus,
     HostAssetItem,
     HostAssetPage,
-    HostTestStatus,
+    HostDetectionFilter,
 )
 from app.schemas.heartbeat import (
     AccessNodeListItem,
@@ -150,7 +150,7 @@ async def list_node_assets(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     search: Annotated[str | None, Query(max_length=255)] = None,
     lifecycle_status: Annotated[AssetLifecycleStatus | None, Query()] = None,
-    detection_status: Annotated[HostTestStatus | None, Query()] = None,
+    detection_status: Annotated[HostDetectionFilter | None, Query()] = None,
     tag: Annotated[str | None, Query(max_length=32)] = None,
 ) -> HostAssetPage:
     assets, total = await HostAssetQueryService(session).list_page(
