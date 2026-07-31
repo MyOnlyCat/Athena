@@ -14,6 +14,7 @@ from app.models.registration import AccessNode, RegistrationApplication
 from app.schemas.registration import (
     NONCE_PATTERN,
     SIGNATURE_PATTERN,
+    RegistrationApplicationStatus,
     RegistrationPayload,
 )
 from app.services.crypto import CredentialCipher
@@ -57,7 +58,7 @@ class RegistrationThrottle:
                     del buckets[key]
         self._last_cleanup = now
 
-    def _record(
+    def _record_attempt_and_report_limit(
         self,
         buckets: dict[str, deque[datetime]],
         key: str,
@@ -83,14 +84,14 @@ class RegistrationThrottle:
     ) -> None:
         cutoff = now - timedelta(seconds=NODE_RATE_WINDOW_SECONDS)
         self._cleanup(cutoff, now)
-        node_limited = self._record(
+        node_limited = self._record_attempt_and_report_limit(
             self._node_attempts,
             node_id,
             limit=1,
             cutoff=cutoff,
             now=now,
         )
-        ip_limited = self._record(
+        ip_limited = self._record_attempt_and_report_limit(
             self._ip_attempts,
             source_ip or "<unknown>",
             limit=IP_RATE_LIMIT,
@@ -309,7 +310,7 @@ class RegistrationService:
         nonce: str,
         signature: str,
         received_at: datetime,
-    ) -> str:
+    ) -> RegistrationApplicationStatus:
         try:
             timestamp_seconds = int(timestamp)
         except (ValueError, TypeError):
@@ -334,7 +335,7 @@ class RegistrationService:
         if node is None:
             latest = await self._latest_application(node_id)
             if latest is not None:
-                return latest.status
+                return cast(RegistrationApplicationStatus, latest.status)
             raise AppError(
                 "NODE_NOT_APPROVED",
                 "节点尚未批准",
