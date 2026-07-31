@@ -35,3 +35,8 @@ Athena-Node 是部署在目标网络中的子节点，负责管理本节点可�
 - [统一样式规范](../docs/node/style-guide.md)
 - [任务清单](../TASKS.md)
 - [更新日志](../CHANGELOG.md)
+
+Windows 启动器会在启动 API 前执行数据库迁移。对于历史版本通过 SQLAlchemy
+`create_all` 创建、但尚无 `alembic_version` 的完整旧库，启动器会先生成
+`.pre-alembic-0007_node_identity.bak` 备份，验证结构与 `0007` 完全匹配后再建立
+基线并升级。无法识别的结构会拒绝自动修改，并提示人工检查。
