@@ -4,13 +4,21 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Header, Query, Request
 
 from app.api.deps import CurrentUserDep, SessionDep
+from app.core.errors import AppError
+from app.schemas.asset import (
+    AssetLifecycleStatus,
+    HostAssetItem,
+    HostAssetPage,
+    HostTestStatus,
+)
 from app.schemas.heartbeat import (
     AccessNodeListItem,
     AccessNodePage,
     ConnectivityStatus,
     HeartbeatAccepted,
 )
-from app.services.heartbeats import HeartbeatService
+from app.services.assets import HostAssetQueryService
+from app.services.heartbeats import MAX_HEARTBEAT_BODY_BYTES, HeartbeatService
 from app.services.node_status import connectivity_status
 from app.services.nodes import AccessNodeQueryService
 
@@ -32,7 +40,28 @@ async def accept_heartbeat(
     nonce: Annotated[str, Header(alias="X-Nonce")],
     signature: Annotated[str, Header(alias="X-Signature")],
 ) -> HeartbeatAccepted:
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > MAX_HEARTBEAT_BODY_BYTES:
+                raise AppError(
+                    "NODE_PAYLOAD_TOO_LARGE",
+                    "心跳正文超过 5 MiB 限制",
+                    status_code=413,
+                )
+        except ValueError:
+            raise AppError(
+                "NODE_AUTH_INVALID",
+                "节点认证头无效",
+                status_code=422,
+            ) from None
     body = await request.body()
+    if len(body) > MAX_HEARTBEAT_BODY_BYTES:
+        raise AppError(
+            "NODE_PAYLOAD_TOO_LARGE",
+            "心跳正文超过 5 MiB 限制",
+            status_code=413,
+        )
     received_at = datetime.now(UTC)
     async with request.app.state.node_write_lock:
         accepted_at = await HeartbeatService(
@@ -105,6 +134,52 @@ async def list_nodes(
                 last_heartbeat_at=node.last_heartbeat_at,
             )
             for node in nodes
+        ],
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
+
+
+@admin_router.get("/{node_id}/assets", response_model=HostAssetPage)
+async def list_node_assets(
+    node_id: str,
+    session: SessionDep,
+    _: CurrentUserDep,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    search: Annotated[str | None, Query(max_length=255)] = None,
+    lifecycle_status: Annotated[AssetLifecycleStatus | None, Query()] = None,
+    detection_status: Annotated[HostTestStatus | None, Query()] = None,
+    tag: Annotated[str | None, Query(max_length=32)] = None,
+) -> HostAssetPage:
+    assets, total = await HostAssetQueryService(session).list_page(
+        node_id=node_id,
+        page=page,
+        page_size=page_size,
+        search=search,
+        lifecycle_status=lifecycle_status,
+        detection_status=detection_status,
+        tag=tag,
+    )
+    return HostAssetPage(
+        items=[
+            HostAssetItem(
+                node_id=asset.node_id,
+                host_id=asset.host_id,
+                name=asset.name,
+                address=asset.address,
+                port=asset.port,
+                username=asset.username,
+                tags=asset.tags,
+                is_local=asset.is_local,
+                last_test_status=asset.last_test_status,
+                last_test_code=asset.last_test_code,
+                last_tested_at=asset.last_tested_at,
+                lifecycle_status="retired" if asset.retired_at else "active",
+                retired_at=asset.retired_at,
+            )
+            for asset in assets
         ],
         page=page,
         page_size=page_size,

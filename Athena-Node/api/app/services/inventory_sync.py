@@ -16,6 +16,19 @@ def _read(item: Any, name: str) -> Any:
     return getattr(item, name)
 
 
+def _utc_rfc3339(value: datetime) -> str:
+    normalized = value.replace(tzinfo=value.tzinfo or UTC).astimezone(UTC)
+    return normalized.isoformat().replace("+00:00", "Z")
+
+
+def _public_host(item: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+    result = {field: _read(item, field) for field in fields}
+    tested_at = result["last_tested_at"]
+    if isinstance(tested_at, datetime):
+        result["last_tested_at"] = _utc_rfc3339(tested_at)
+    return result
+
+
 def build_inventory(
     *,
     node_id: str,
@@ -32,6 +45,8 @@ def build_inventory(
         "tags",
         "is_local",
         "last_test_status",
+        "last_test_code",
+        "last_tested_at",
     )
     return {
         "protocol_version": "v1",
@@ -40,10 +55,10 @@ def build_inventory(
             "name": node_name,
             "version": version,
             "hostname": platform.node(),
-            "reported_at": datetime.now(UTC).isoformat(),
+            "reported_at": _utc_rfc3339(datetime.now(UTC)),
         },
         "hosts": [
-            {field: _read(host, field) for field in public_fields}
+            _public_host(host, public_fields)
             for host in hosts
         ],
     }

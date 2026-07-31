@@ -169,13 +169,28 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
       "username": "root",
       "tags": ["production"],
       "is_local": true,
-      "last_test_status": "success"
+      "last_test_status": "success",
+      "last_test_code": "SSH_CONNECTED",
+      "last_tested_at": "2026-07-29T13:59:30Z"
     }
   ]
 }
 ```
 
-密码和密文不会上报。`hosts` 是节点的完整当前清单。
+密码、密文和自由文本连接错误不会上报。`hosts` 是节点的完整当前清单。检测状态为
+`success`、`failed`、`pending_trust` 或 `null`；已检测主机必须同时携带标准
+`last_test_code` 和 UTC RFC 3339 `last_tested_at`，尚未检测时三者均为空。
+`success` 只对应 `SSH_CONNECTED`，`pending_trust` 只对应
+`SSH_HOST_KEY_UNTRUSTED`；失败状态使用 `SSH_AUTH_FAILED`、`SSH_TIMEOUT`、
+`SSH_CONNECTION_FAILED` 或 `SSH_HOST_KEY_CHANGED`。
+
+Master 严格拒绝未知字段、重复 host ID、字符串形式端口、非布尔本机标记、非法端口、
+非法检测状态、重复或超限标签以及不带时区的检测时间。任一主机非法时整次心跳回滚，
+不会更新最后心跳、部分资产或退役状态。每个 Node 最多上报 500 条主机资产，心跳正文
+最多 5 MiB，全局最多保留 10,000 条在管资产。
+
+成功快照以 `(node_id, host_id)` 更新资产，不按 IP 跨 Node 合并。本次缺少、上次仍在管
+的资产会被软退役；相同身份再次出现时恢复为在管并更新最新字段。
 
 `protocol_version` 与 Node 软件版本彼此独立，当前仅接受 `v1`。Master 必须先使用
 收到的原始正文完成 HMAC 验证，再解析 JSON；不支持的协议版本返回
@@ -207,6 +222,20 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
 连接状态只使用 Master 接收时间推导：少于 120 秒为 `online`，120–300 秒（含边界）
 为 `stale`，超过 300 秒或从未收到心跳为 `offline`。管理界面映射为“在线”、
 “心跳延迟”和“离线”，并按浏览器时区显示最后心跳。
+
+管理员通过 `GET /api/v1/nodes/{node_id}/assets` 查看所选接入节点的只读主机资产。
+接口支持服务端分页，并提供以下筛选：
+
+| 参数 | 说明 |
+| --- | --- |
+| `page` / `page_size` | 服务端分页，`page_size` 最大 100 |
+| `search` | 搜索资产名称或地址 |
+| `lifecycle_status` | `active`（在管）或 `retired`（已退役） |
+| `detection_status` | `success`、`failed` 或 `pending_trust` |
+| `tag` | 按单个完整标签筛选 |
+
+响应保留最后检测状态、标准错误码和检测时间；时间使用 UTC RFC 3339，页面按浏览器
+时区显示。Master 页面不会编辑 Node 上报的资产字段。
 
 ## 领取发布任务
 
@@ -315,6 +344,8 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
 | 409 | `NODE_NONCE_REPLAYED` | nonce 重放 |
 | 422 | `NODE_AUTH_INVALID` | 认证头格式无效 |
 | 422 | `NODE_PAYLOAD_INVALID` | 心跳正文无效或节点身份不匹配 |
+| 413 | `NODE_PAYLOAD_TOO_LARGE` | 心跳正文超过 5 MiB |
+| 422 | `ASSET_CAPACITY_EXCEEDED` | 全局在管资产将超过 10,000 条 |
 | 426 | `NODE_PROTOCOL_UNSUPPORTED` | 正文协议版本不受支持 |
 | 409 | `TASK_LEASE_CONFLICT` | 任务已被领取 |
 | 422 | `TASK_PAYLOAD_INVALID` | 任务结构无效 |

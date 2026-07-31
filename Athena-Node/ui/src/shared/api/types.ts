@@ -17,6 +17,7 @@ export interface Host {
   has_password: boolean;
   host_key_fingerprint: string | null;
   last_test_status: string | null;
+  last_test_code: string | null;
   last_test_message: string | null;
   last_tested_at: string | null;
   created_at: string;

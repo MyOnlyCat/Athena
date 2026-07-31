@@ -37,6 +37,7 @@ def test_unversioned_create_all_database_is_safely_baselined_and_upgraded(
         connection.exec_driver_sql(
             "ALTER TABLE master_settings DROP COLUMN registration_status"
         )
+        connection.exec_driver_sql("ALTER TABLE hosts DROP COLUMN last_test_code")
     engine.dispose()
 
     upgraded = run_upgrade(database)
@@ -44,15 +45,20 @@ def test_unversioned_create_all_database_is_safely_baselined_and_upgraded(
     assert upgraded.returncode == 0, upgraded.stderr
     assert Path(f"{database}.pre-alembic-0007_node_identity.bak").exists()
     with sqlite3.connect(database) as connection:
-        columns = {
+        master_columns = {
             row[1]
             for row in connection.execute('PRAGMA table_info("master_settings")')
+        }
+        host_columns = {
+            row[1]
+            for row in connection.execute('PRAGMA table_info("hosts")')
         }
         version = connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone()
-    assert "registration_status" in columns
-    assert version == ("0008_registration_status",)
+    assert "registration_status" in master_columns
+    assert "last_test_code" in host_columns
+    assert version == ("0009_host_test_code",)
 
 
 def test_unknown_unversioned_schema_is_rejected_without_stamping(

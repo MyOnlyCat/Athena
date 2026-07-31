@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -23,6 +24,9 @@ def test_inventory_payload_omits_credentials_and_contains_runtime_state():
                 "tags": ["production"],
                 "is_local": True,
                 "last_test_status": "success",
+                "last_test_code": "SSH_CONNECTED",
+                "last_tested_at": datetime(2026, 8, 1, 8, tzinfo=UTC),
+                "last_test_message": "SSH 连接成功",
                 "encrypted_password": "must-not-leak",
             }
         ],
@@ -30,6 +34,7 @@ def test_inventory_payload_omits_credentials_and_contains_runtime_state():
 
     assert payload["protocol_version"] == "v1"
     assert payload["node"]["id"] == "node-1"
+    assert payload["node"]["reported_at"].endswith("Z")
     assert payload["hosts"][0] == {
         "id": "host-1",
         "name": "web-01",
@@ -39,8 +44,11 @@ def test_inventory_payload_omits_credentials_and_contains_runtime_state():
         "tags": ["production"],
         "is_local": True,
         "last_test_status": "success",
+        "last_test_code": "SSH_CONNECTED",
+        "last_tested_at": "2026-08-01T08:00:00Z",
     }
     assert "password" not in str(payload)
+    assert "SSH 连接成功" not in str(payload)
 
 
 def test_inventory_change_wakes_background_sync():

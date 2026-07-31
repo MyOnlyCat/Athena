@@ -34,6 +34,7 @@ class HostResponse(HostBase):
     id: str
     host_key_fingerprint: str | None
     last_test_status: str | None
+    last_test_code: str | None
     last_test_message: str | None
     last_tested_at: datetime | None
     created_at: datetime

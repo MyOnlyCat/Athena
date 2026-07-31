@@ -21,6 +21,7 @@ class Host(Base):
     is_local: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     host_key_fingerprint: Mapped[str | None] = mapped_column(String(128))
     last_test_status: Mapped[str | None] = mapped_column(String(32))
+    last_test_code: Mapped[str | None] = mapped_column(String(64))
     last_test_message: Mapped[str | None] = mapped_column(String(255))
     last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

@@ -134,6 +134,7 @@ class HostService:
         elif fingerprint:
             result.update(status="success", code="SSH_CONNECTED", message="SSH 连接成功")
         host.last_test_status = str(result["status"])
+        host.last_test_code = str(result["code"])
         host.last_test_message = str(result["message"])
         host.last_tested_at = datetime.now(UTC)
         await self.session.commit()

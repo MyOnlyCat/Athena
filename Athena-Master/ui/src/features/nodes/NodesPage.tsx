@@ -1,11 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Input, Select, Space, Table, Tag } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { nodesApi } from "../../shared/api/client";
 import type {
   AccessNode,
+  AssetLifecycleStatus,
   ConnectivityStatus,
+  HostAsset,
+  HostAssetListParams,
+  HostTestStatus,
   ListedAccessNode,
   NodeListParams
 } from "../../shared/api/types";
@@ -21,6 +25,12 @@ const CONNECTIVITY_LABELS: Record<ConnectivityStatus, string> = {
   online: "在线",
   stale: "心跳延迟",
   offline: "离线"
+};
+
+const HOST_STATUS_LABELS: Record<HostTestStatus, string> = {
+  success: "连接正常",
+  failed: "连接失败",
+  pending_trust: "待确认指纹"
 };
 
 function formatLocalTime(value: string | null): string {
@@ -49,6 +59,15 @@ export function NodesPage() {
     useState<NodeListParams["sort_by"]>("last_heartbeat_at");
   const [sortOrder, setSortOrder] =
     useState<NodeListParams["sort_order"]>("desc");
+  const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  const [assetPage, setAssetPage] = useState(1);
+  const [assetPageSize, setAssetPageSize] = useState(20);
+  const [assetSearchInput, setAssetSearchInput] = useState("");
+  const [assetSearch, setAssetSearch] = useState("");
+  const [assetLifecycle, setAssetLifecycle] = useState<AssetLifecycleStatus>();
+  const [assetDetection, setAssetDetection] = useState<HostTestStatus>();
+  const [assetTagInput, setAssetTagInput] = useState("");
+  const [assetTag, setAssetTag] = useState("");
 
   const params: NodeListParams = {
     page,
@@ -62,6 +81,26 @@ export function NodesPage() {
   const query = useQuery({
     queryKey: ["nodes", params],
     queryFn: () => nodesApi.list(params)
+  });
+  useEffect(() => {
+    const nodes = query.data?.items ?? [];
+    if (nodes.length > 0 && !nodes.some((node) => node.node_id === selectedNodeId)) {
+      setSelectedNodeId(nodes[0].node_id);
+      setAssetPage(1);
+    }
+  }, [query.data?.items, selectedNodeId]);
+  const assetParams: HostAssetListParams = {
+    page: assetPage,
+    page_size: assetPageSize,
+    ...(assetSearch ? { search: assetSearch } : {}),
+    ...(assetLifecycle ? { lifecycle_status: assetLifecycle } : {}),
+    ...(assetDetection ? { detection_status: assetDetection } : {}),
+    ...(assetTag ? { tag: assetTag } : {})
+  };
+  const assetsQuery = useQuery({
+    queryKey: ["node-assets", selectedNodeId, assetParams],
+    queryFn: () => nodesApi.listAssets(selectedNodeId!, assetParams),
+    enabled: Boolean(selectedNodeId)
   });
   const browserTimeZone =
     Intl.DateTimeFormat().resolvedOptions().timeZone || "浏览器本地时区";
@@ -156,6 +195,15 @@ export function NodesPage() {
           rowKey="node_id"
           dataSource={query.data?.items ?? []}
           loading={query.isLoading}
+          rowClassName={(node) =>
+            node.node_id === selectedNodeId ? "ant-table-row-selected" : ""
+          }
+          onRow={(node) => ({
+            onClick: () => {
+              setSelectedNodeId(node.node_id);
+              setAssetPage(1);
+            }
+          })}
           pagination={{
             current: query.data?.page ?? page,
             pageSize: query.data?.page_size ?? pageSize,
@@ -216,6 +264,127 @@ export function NodesPage() {
             }
           ]}
         />
+        <div style={{ marginTop: 32 }}>
+          <h2>主机资产</h2>
+          <p className="muted">资产由所选接入节点的完整心跳快照维护，此页面只读。</p>
+          <Space wrap className="table-toolbar">
+            <Input.Search
+              placeholder="搜索资产名称或地址"
+              value={assetSearchInput}
+              allowClear
+              onChange={(event) => setAssetSearchInput(event.target.value)}
+              onSearch={(value) => {
+                setAssetSearch(value.trim());
+                setAssetPage(1);
+              }}
+              style={{ width: 240 }}
+            />
+            <Input.Search
+              placeholder="按标签筛选"
+              value={assetTagInput}
+              allowClear
+              onChange={(event) => setAssetTagInput(event.target.value)}
+              onSearch={(value) => {
+                setAssetTag(value.trim());
+                setAssetPage(1);
+              }}
+              style={{ width: 180 }}
+            />
+            <Select
+              aria-label="资产状态"
+              placeholder="资产状态"
+              allowClear
+              value={assetLifecycle}
+              onChange={(value) => {
+                setAssetLifecycle(value);
+                setAssetPage(1);
+              }}
+              options={[
+                { value: "active", label: "在管" },
+                { value: "retired", label: "已退役" }
+              ]}
+              style={{ width: 120 }}
+            />
+            <Select
+              aria-label="检测状态"
+              placeholder="检测状态"
+              allowClear
+              value={assetDetection}
+              onChange={(value) => {
+                setAssetDetection(value);
+                setAssetPage(1);
+              }}
+              options={[
+                { value: "success", label: "连接正常" },
+                { value: "failed", label: "连接失败" },
+                { value: "pending_trust", label: "待确认指纹" }
+              ]}
+              style={{ width: 140 }}
+            />
+          </Space>
+          <Table<HostAsset>
+            rowKey="host_id"
+            dataSource={assetsQuery.data?.items ?? []}
+            loading={assetsQuery.isLoading}
+            pagination={{
+              current: assetsQuery.data?.page ?? assetPage,
+              pageSize: assetsQuery.data?.page_size ?? assetPageSize,
+              total: assetsQuery.data?.total ?? 0,
+              showSizeChanger: true,
+              showTotal: (total) => `共 ${total} 个主机资产`,
+              onChange: (nextPage, nextPageSize) => {
+                setAssetPage(nextPageSize === assetPageSize ? nextPage : 1);
+                setAssetPageSize(nextPageSize);
+              }
+            }}
+            columns={[
+              {
+                title: "主机资产",
+                render: (_, asset) => (
+                  <Space direction="vertical" size={0}>
+                    <span className="primary-cell">{asset.name}</span>
+                    <span className="muted">{asset.address}:{asset.port}</span>
+                  </Space>
+                )
+              },
+              {
+                title: "登录信息",
+                render: (_, asset) => (
+                  <Space direction="vertical" size={0}>
+                    <span>{asset.username}</span>
+                    {asset.is_local ? <Tag>本机</Tag> : null}
+                  </Space>
+                )
+              },
+              {
+                title: "标签",
+                render: (_, asset) => asset.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)
+              },
+              {
+                title: "检测状态",
+                render: (_, asset) => (
+                  <Space direction="vertical" size={0}>
+                    <Tag color={asset.last_test_status === "success" ? "success" : "warning"}>
+                      {asset.last_test_status
+                        ? HOST_STATUS_LABELS[asset.last_test_status]
+                        : "尚未检测"}
+                    </Tag>
+                    <span className="muted">{asset.last_test_code ?? "无错误码"}</span>
+                    <span className="muted">{formatLocalTime(asset.last_tested_at)}</span>
+                  </Space>
+                )
+              },
+              {
+                title: "资产状态",
+                render: (_, asset) => (
+                  <Tag color={asset.lifecycle_status === "active" ? "success" : "default"}>
+                    {asset.lifecycle_status === "active" ? "在管" : "已退役"}
+                  </Tag>
+                )
+              }
+            ]}
+          />
+        </div>
       </section>
     </div>
   );
