@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from app.core.errors import AppError
 from app.services.signing import sign_request
 
 
@@ -54,7 +55,18 @@ class MasterClient:
                 "X-Signature": signature,
             },
         )
-        response.raise_for_status()
+        if response.is_error:
+            try:
+                error = response.json()
+            except ValueError:
+                error = {}
+            if isinstance(error, dict) and isinstance(error.get("code"), str):
+                raise AppError(
+                    error["code"],
+                    str(error.get("message") or "主节点拒绝了请求"),
+                    status_code=response.status_code,
+                )
+            response.raise_for_status()
         if not response.content:
             return {}
         return dict(response.json())

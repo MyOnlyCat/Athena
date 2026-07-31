@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
+from app.core.errors import AppError
 from app.main import create_app
 from app.services.master_client import MasterClient
 from app.services.signing import sign_request
@@ -51,6 +52,36 @@ async def test_node_submits_signed_registration_without_token() -> None:
         nonce=request.headers["X-Nonce"],
         body=request.content,
     )
+
+
+@pytest.mark.asyncio
+async def test_node_preserves_master_registration_error_contract() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409,
+            json={
+                "code": "REGISTRATION_REJECTED",
+                "message": "接入申请已被拒绝，请联系管理员恢复后手动重试",
+            },
+        )
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://master.test",
+    )
+    client = MasterClient(
+        "http://master.test",
+        "018f47a2-4b5c-7def-8123-456789abcdef",
+        "registration-secret-token-value-123",
+        http,
+    )
+
+    with pytest.raises(AppError) as captured:
+        await client.submit_registration({"node_id": client.node_id})
+
+    assert captured.value.code == "REGISTRATION_REJECTED"
+    assert captured.value.message == "接入申请已被拒绝，请联系管理员恢复后手动重试"
+    assert captured.value.status_code == 409
 
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
@@ -174,3 +205,50 @@ def test_pending_registration_refreshes_to_approved_from_master(
     assert synchronized.json() == {"status": "approved"}
     assert refreshed.status_code == 200
     assert refreshed.json()["registration_status"] == "approved"
+
+
+def test_pending_registration_refreshes_to_rejected_and_stops_pending_state(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeRegistrationClient:
+        def __init__(self, base_url: str, node_id: str, token: str) -> None:
+            del base_url, node_id, token
+
+        async def submit_registration(self, payload: dict[str, Any]) -> dict[str, Any]:
+            del payload
+            return {"status": "pending"}
+
+        async def get_registration_status(self) -> dict[str, Any]:
+            return {"status": "rejected"}
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "app.api.v1.master_settings.MasterClient",
+        FakeRegistrationClient,
+    )
+    app = create_app(settings)
+    with TestClient(app) as client:
+        headers = _auth_headers(client)
+        app.state.master_runtime.start_worker = False
+        client.put(
+            "/api/v1/master-settings",
+            headers=headers,
+            json={
+                "scheme": "http",
+                "host": "master.example.com",
+                "port": 8001,
+                "token": "registration-secret-token-value-123",
+            },
+        )
+        client.post("/api/v1/master-settings/registration", headers=headers)
+        synchronized = client.post(
+            "/api/v1/master-settings/registration/status",
+            headers=headers,
+        )
+        refreshed = client.get("/api/v1/master-settings", headers=headers)
+
+    assert synchronized.json() == {"status": "rejected"}
+    assert refreshed.json()["registration_status"] == "rejected"

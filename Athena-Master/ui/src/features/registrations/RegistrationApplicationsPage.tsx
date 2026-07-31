@@ -27,7 +27,10 @@ export function RegistrationApplicationsPage() {
   const [pageSize, setPageSize] = useState(20);
   const [approvalTarget, setApprovalTarget] =
     useState<RegistrationApplication | null>(null);
+  const [rejectionTarget, setRejectionTarget] =
+    useState<RegistrationApplication | null>(null);
   const [form] = Form.useForm<{ token: string }>();
+  const [rejectionForm] = Form.useForm<{ reason?: string }>();
   const query = useQuery({
     queryKey: ["registration-applications", page, pageSize],
     queryFn: () => registrationApplicationsApi.list(page, pageSize)
@@ -42,6 +45,25 @@ export function RegistrationApplicationsPage() {
       await queryClient.invalidateQueries({
         queryKey: ["registration-applications"]
       });
+    },
+    onError: (error) => message.error(apiMessage(error))
+  });
+  const rejection = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      registrationApplicationsApi.reject(id, reason),
+    onSuccess: async () => {
+      rejectionForm.resetFields();
+      setRejectionTarget(null);
+      message.success("注册申请已拒绝");
+      await queryClient.invalidateQueries({ queryKey: ["registration-applications"] });
+    },
+    onError: (error) => message.error(apiMessage(error))
+  });
+  const restoration = useMutation({
+    mutationFn: (id: string) => registrationApplicationsApi.restore(id),
+    onSuccess: async () => {
+      message.success("注册申请已恢复，Node 可手动重新提交");
+      await queryClient.invalidateQueries({ queryKey: ["registration-applications"] });
     },
     onError: (error) => message.error(apiMessage(error))
   });
@@ -94,12 +116,23 @@ export function RegistrationApplicationsPage() {
             },
             {
               title: "可信状态",
-              render: (_, application) =>
-                application.identity_verified ? (
+              render: (_, application) => (
+                <Space direction="vertical" size={0}>
+                {application.identity_verified ? (
                   <Tag color="success">身份已验证</Tag>
+                ) : application.status === "rejected" ? (
+                  <Tag color="error">已拒绝</Tag>
+                ) : application.status === "expired" ? (
+                  <Tag>已过期</Tag>
+                ) : application.status === "restored" ? (
+                  <Tag color="processing">已恢复</Tag>
                 ) : (
                   <Tag color="warning">身份未验证</Tag>
                 )
+                }
+                {application.rejection_reason && <span>{application.rejection_reason}</span>}
+                </Space>
+              )
             },
             {
               title: "接收时间",
@@ -111,12 +144,28 @@ export function RegistrationApplicationsPage() {
               align: "right",
               render: (_, application) =>
                 application.status === "pending" ? (
+                  <Space>
+                    <Button onClick={() => setRejectionTarget(application)}>
+                      拒绝
+                    </Button>
+                    <Button
+                      type="primary"
+                      onClick={() => setApprovalTarget(application)}
+                    >
+                      批准
+                    </Button>
+                  </Space>
+                ) : application.status === "rejected" ? (
                   <Button
-                    type="primary"
-                    onClick={() => setApprovalTarget(application)}
+                    loading={restoration.isPending}
+                    onClick={() => restoration.mutate(application.id)}
                   >
-                    批准
+                    恢复申请
                   </Button>
+                ) : application.status === "expired" ? (
+                  <Tag>已过期</Tag>
+                ) : application.status === "restored" ? (
+                  <Tag color="processing">等待 Node 重新提交</Tag>
                 ) : (
                   <Tag color="success">已批准</Tag>
                 )
@@ -157,6 +206,33 @@ export function RegistrationApplicationsPage() {
             ]}
           >
             <Input.Password autoComplete="new-password" maxLength={256} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        open={rejectionTarget !== null}
+        destroyOnHidden
+        title={`拒绝注册申请：${rejectionTarget?.reported_name ?? ""}`}
+        okText="拒绝"
+        okButtonProps={{ danger: true }}
+        cancelText="取消"
+        confirmLoading={rejection.isPending}
+        onCancel={() => {
+          rejectionForm.resetFields();
+          setRejectionTarget(null);
+        }}
+        onOk={() => rejectionForm.submit()}
+      >
+        <Form
+          form={rejectionForm}
+          preserve={false}
+          layout="vertical"
+          onFinish={({ reason }) => {
+            if (rejectionTarget) rejection.mutate({ id: rejectionTarget.id, reason });
+          }}
+        >
+          <Form.Item name="reason" label="拒绝原因">
+            <Input.TextArea maxLength={1000} />
           </Form.Item>
         </Form>
       </Modal>

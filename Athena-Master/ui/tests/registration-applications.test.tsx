@@ -8,7 +8,9 @@ import { RegistrationApplicationsPage } from "../src/features/registrations/Regi
 
 const apiMocks = vi.hoisted(() => ({
   list: vi.fn(),
-  approve: vi.fn()
+  approve: vi.fn(),
+  reject: vi.fn(),
+  restore: vi.fn()
 }));
 
 vi.mock("../src/shared/api/client", () => ({
@@ -52,6 +54,8 @@ beforeEach(() => {
     node_id: "018f47a2-4b5c-7def-8123-456789abcdef",
     management_status: "active"
   });
+  apiMocks.reject.mockResolvedValue({ id: "application-1", status: "rejected" });
+  apiMocks.restore.mockResolvedValue({ id: "application-1", status: "restored" });
 });
 
 test("marks application data untrusted and approves with a non-disclosed Token", async () => {
@@ -94,3 +98,48 @@ test("keeps the application available when Token verification fails", async () =
   expect(await screen.findByText("Token 与注册申请不匹配")).toBeInTheDocument();
   expect(screen.getByText("上海接入节点")).toBeInTheDocument();
 }, 10_000);
+
+test("rejects an application with an optional reason", async () => {
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(await screen.findByRole("button", { name: /拒\s*绝/ }));
+  const dialog = await screen.findByRole("dialog", { name: /拒绝注册申请/ });
+  await user.type(within(dialog).getByLabelText("拒绝原因"), "来源尚未核实");
+  await user.click(within(dialog).getByRole("button", { name: /拒\s*绝/ }));
+
+  await waitFor(() =>
+    expect(apiMocks.reject).toHaveBeenCalledWith("application-1", "来源尚未核实")
+  );
+  await waitFor(() => expect(apiMocks.list).toHaveBeenCalledTimes(2));
+});
+
+test("shows a rejected application and lets an administrator restore reapplication", async () => {
+  apiMocks.list.mockResolvedValueOnce({
+    items: [
+      {
+        id: "application-1",
+        node_id: "018f47a2-4b5c-7def-8123-456789abcdef",
+        reported_name: "上海接入节点",
+        hostname: "athena-node-01",
+        software_version: "0.1.0",
+        status: "rejected",
+        rejection_reason: "来源尚未核实",
+        identity_verified: false,
+        received_at: "2026-07-31T03:00:00Z"
+      }
+    ],
+    page: 1,
+    page_size: 20,
+    total: 1
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  expect(await screen.findByText("已拒绝")).toBeInTheDocument();
+  expect(screen.getByText("来源尚未核实")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /恢复申请/ }));
+
+  await waitFor(() => expect(apiMocks.restore).toHaveBeenCalledWith("application-1"));
+  await waitFor(() => expect(apiMocks.list).toHaveBeenCalledTimes(2));
+});

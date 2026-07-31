@@ -9,6 +9,7 @@ from app.schemas.registration import (
     RegistrationApplicationPage,
     RegistrationApplicationResponse,
     RegistrationApproval,
+    RegistrationRejection,
     RegistrationStatusResponse,
     RegistrationSubmitted,
 )
@@ -22,7 +23,11 @@ admin_router = APIRouter(
 
 
 def service(request: Request, session: SessionDep) -> RegistrationService:
-    return RegistrationService(session, request.app.state.settings.credential_key)
+    return RegistrationService(
+        session,
+        request.app.state.settings.credential_key,
+        request.app.state.registration_throttle,
+    )
 
 
 @node_router.post(
@@ -39,15 +44,16 @@ async def submit_registration_application(
     signature: Annotated[str, Header(alias="X-Signature")],
 ) -> RegistrationSubmitted:
     body = await request.body()
-    await service(request, session).submit(
-        body=body,
-        node_id=node_id,
-        timestamp=timestamp_value,
-        nonce=nonce,
-        signature=signature,
-        source_ip=request.client.host if request.client else None,
-        received_at=datetime.now(UTC),
-    )
+    async with request.app.state.registration_write_lock:
+        await service(request, session).submit(
+            body=body,
+            node_id=node_id,
+            timestamp=timestamp_value,
+            nonce=nonce,
+            signature=signature,
+            source_ip=request.client.host if request.client else None,
+            received_at=datetime.now(UTC),
+        )
     return RegistrationSubmitted(status="pending")
 
 
@@ -75,7 +81,11 @@ async def get_registration_status(
     return RegistrationStatusResponse(status=registration_status)
 
 
-@admin_router.get("", response_model=RegistrationApplicationPage)
+@admin_router.get(
+    "",
+    response_model=RegistrationApplicationPage,
+    response_model_exclude_none=True,
+)
 async def list_registration_applications(
     request: Request,
     session: SessionDep,
@@ -105,5 +115,39 @@ async def approve_registration_application(
     session: SessionDep,
     _: CurrentUserDep,
 ) -> AccessNodeResponse:
-    node = await service(request, session).approve(application_id, data.token)
+    async with request.app.state.registration_write_lock:
+        node = await service(request, session).approve(application_id, data.token)
     return AccessNodeResponse.model_validate(node)
+
+
+@admin_router.post(
+    "/{application_id}/reject",
+    response_model=RegistrationApplicationResponse,
+    response_model_exclude_none=True,
+)
+async def reject_registration_application(
+    application_id: str,
+    data: RegistrationRejection,
+    request: Request,
+    session: SessionDep,
+    _: CurrentUserDep,
+) -> RegistrationApplicationResponse:
+    async with request.app.state.registration_write_lock:
+        application = await service(request, session).reject(application_id, data.reason)
+    return RegistrationApplicationResponse.model_validate(application)
+
+
+@admin_router.post(
+    "/{application_id}/restore",
+    response_model=RegistrationApplicationResponse,
+    response_model_exclude_none=True,
+)
+async def restore_registration_application(
+    application_id: str,
+    request: Request,
+    session: SessionDep,
+    _: CurrentUserDep,
+) -> RegistrationApplicationResponse:
+    async with request.app.state.registration_write_lock:
+        application = await service(request, session).restore(application_id)
+    return RegistrationApplicationResponse.model_validate(application)

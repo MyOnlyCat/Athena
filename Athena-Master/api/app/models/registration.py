@@ -26,7 +26,13 @@ class RegistrationApplication(Base):
     auth_signature: Mapped[str] = mapped_column(String(64), nullable=False)
     source_ip: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    rejection_reason: Mapped[str | None] = mapped_column(String(1000))
     received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    status_changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
         nullable=False,
@@ -46,6 +52,11 @@ class AccessNode(Base):
         nullable=False,
     )
     encrypted_token: Mapped[str] = mapped_column(String(512), nullable=False)
+    token_fingerprint: Mapped[str | None] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=True,
+    )
     approved_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

@@ -5,6 +5,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+RegistrationApplicationStatus = Literal[
+    "pending",
+    "approved",
+    "rejected",
+    "expired",
+    "restored",
+]
+
 
 class RegistrationPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -36,7 +44,7 @@ class RegistrationSubmitted(BaseModel):
 
 
 class RegistrationStatusResponse(BaseModel):
-    status: Literal["approved"]
+    status: RegistrationApplicationStatus
 
 
 class RegistrationApplicationResponse(BaseModel):
@@ -47,7 +55,8 @@ class RegistrationApplicationResponse(BaseModel):
     reported_name: str
     hostname: str
     software_version: str
-    status: str
+    status: RegistrationApplicationStatus
+    rejection_reason: str | None = None
     identity_verified: bool = False
     received_at: datetime
 
@@ -66,6 +75,10 @@ class RegistrationApplicationPage(BaseModel):
 
 class RegistrationApproval(BaseModel):
     token: str = Field(min_length=32, max_length=256, repr=False)
+
+
+class RegistrationRejection(BaseModel):
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 class AccessNodeResponse(BaseModel):

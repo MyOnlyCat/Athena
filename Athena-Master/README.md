@@ -1,7 +1,7 @@
 # Athena-Master
 
 Athena-Master 是 Athena 的中心管理节点。当前已提供 FastAPI 后端、React 管理界面、
-SQLite/Alembic 持久化、管理员认证与账号管理、两阶段节点注册审批、健康检查和
+SQLite/Alembic 持久化、管理员认证与账号管理、完整节点注册生命周期、健康检查和
 Windows 本地开发入口。心跳、资产汇总和审计仍由后续需求实现。
 
 ## 项目结构
@@ -84,6 +84,13 @@ Node 使用本地持久化 UUIDv7 身份和 Token 对注册申请的原始 JSON 
 Master 使用 `ATHENA_MASTER_CREDENTIAL_KEY` 对 Node Token 加密落库。API、页面和
 错误响应不会返回 Token 明文或密文。注册协议和接口详见
 [Master 与接入节点协议](../docs/api/master-node-protocol.md)。
+
+管理员可以拒绝申请（原因可选），也可以恢复已拒绝身份的重新申请资格。待审批申请
+七天后自动过期；后台维护任务清理状态变更超过 30 天的已拒绝/已过期申请。提交入口
+限制为每 Node ID 每分钟一次、每来源 IP 每分钟十次和最多 1,000 条待审批申请。
+审批 Token 使用不可逆指纹保证全局唯一，同时仍只以加密原文执行 HMAC 认证。
+旧数据库若已有重复 Node Token，启动时的指纹回填会明确拒绝继续运行，管理员必须先
+为受影响节点配置不同 Token，系统不会自动选择或泄露冲突 Token。
 
 ## 运行边界
 

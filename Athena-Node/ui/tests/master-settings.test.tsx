@@ -151,6 +151,21 @@ test("refreshes a pending registration to approved without a Master callback", a
   expect(screen.queryByText("待管理员审批")).not.toBeInTheDocument();
 });
 
+test("shows rejection clearly and stops automatic status polling", async () => {
+  vi.mocked(masterSettingsApi.get).mockResolvedValueOnce({
+    ...savedSettings,
+    registration_status: "pending"
+  });
+  vi.mocked(masterSettingsApi.registrationStatus).mockResolvedValueOnce({
+    status: "rejected"
+  });
+  renderPage();
+
+  expect(await screen.findByText("已拒绝")).toBeInTheDocument();
+  expect(screen.getByText("管理员恢复后，请手动重新提交申请。")).toBeInTheDocument();
+  expect(masterSettingsApi.registrationStatus).toHaveBeenCalledTimes(1);
+});
+
 test("generates a 32-byte Base64URL Token and copies it immediately", async () => {
   const user = userEvent.setup();
   const random = vi.spyOn(crypto, "getRandomValues").mockImplementation((array) => {

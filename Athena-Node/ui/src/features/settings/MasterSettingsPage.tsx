@@ -79,7 +79,7 @@ export function MasterSettingsPage() {
       return { ...current, registration_status: registration.status };
     },
     refetchInterval: (query) =>
-      query.state.data?.registration_status === "pending" ? 5_000 : false
+      query.state.data?.registration_status === "pending" ? 60_000 : false
   });
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
@@ -177,12 +177,34 @@ export function MasterSettingsPage() {
             {settings.data.registration_status === "approved" && (
               <Tag color="success">已批准</Tag>
             )}
+            {settings.data.registration_status === "rejected" && (
+              <Tag color="error">已拒绝</Tag>
+            )}
+            {settings.data.registration_status === "expired" && (
+              <Tag>已过期</Tag>
+            )}
+            {settings.data.registration_status === "restored" && (
+              <Tag color="processing">可重新申请</Tag>
+            )}
             <Tag>{runtimeStatusLabels[settings.data.runtime_status]}</Tag>
           </Space>
         )}
       </header>
       <Card className="content-card" variant="borderless" loading={settings.isLoading}>
         {error && <Alert className="master-settings-error" type="error" message={error} showIcon />}
+        {settings.data?.registration_status === "rejected" && (
+          <Alert
+            type="error"
+            message="管理员恢复后，请手动重新提交申请。"
+            showIcon
+          />
+        )}
+        {settings.data?.registration_status === "expired" && (
+          <Alert type="warning" message="申请已过期，请手动重新提交。" showIcon />
+        )}
+        {settings.data?.registration_status === "restored" && (
+          <Alert type="info" message="管理员已恢复申请，请手动重新提交。" showIcon />
+        )}
         {settings.data && (
           <section className="master-settings-identity" aria-labelledby="node-identity-title">
             <div>
