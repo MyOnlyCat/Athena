@@ -72,6 +72,9 @@ beforeEach(() => {
   vi.spyOn(masterSettingsApi, "test").mockResolvedValue({ status: "success" });
   vi.spyOn(masterSettingsApi, "update").mockResolvedValue(savedSettings);
   vi.spyOn(masterSettingsApi, "register").mockResolvedValue({ status: "pending" });
+  vi.spyOn(masterSettingsApi, "registrationStatus").mockResolvedValue({
+    status: "pending"
+  });
 });
 
 afterEach(() => {
@@ -106,26 +109,46 @@ test("groups Token controls and configuration actions into consistent UI regions
   expect(within(actions).getByRole("button", { name: /申请接入$/ })).toBeInTheDocument();
 });
 
-test("saves the form before submitting an independent registration application", async () => {
+test("requires saving changed settings before submitting a registration application", async () => {
   const user = userEvent.setup();
+  const updatedSettings = { ...savedSettings, host: "new-master.example.com" };
   vi.mocked(masterSettingsApi.get)
     .mockResolvedValueOnce(savedSettings)
-    .mockResolvedValueOnce({ ...savedSettings, registration_status: "pending" });
+    .mockResolvedValueOnce(updatedSettings)
+    .mockResolvedValueOnce({ ...updatedSettings, registration_status: "pending" });
+  vi.mocked(masterSettingsApi.update).mockResolvedValueOnce(updatedSettings);
   renderPage();
 
   await screen.findByDisplayValue("master.example.com");
-  await user.click(screen.getByRole("button", { name: /申请接入$/ }));
+  const hostInput = screen.getByLabelText("主节点地址");
+  await user.clear(hostInput);
+  await user.type(hostInput, "new-master.example.com");
 
-  await waitFor(() =>
-    expect(masterSettingsApi.update).toHaveBeenCalledWith({
-      scheme: "https",
-      host: "master.example.com",
-      port: 8443,
-      token: ""
-    })
-  );
+  expect(screen.getByRole("button", { name: /申请接入$/ })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: /保存并应用$/ }));
+  await waitFor(() => expect(masterSettingsApi.update).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("button", { name: /申请接入$/ })).toBeEnabled();
+
+  await user.click(screen.getByRole("button", { name: /申请接入$/ }));
   await waitFor(() => expect(masterSettingsApi.register).toHaveBeenCalledTimes(1));
+  expect(masterSettingsApi.update).toHaveBeenCalledTimes(1);
   expect(await screen.findByText("待管理员审批")).toBeInTheDocument();
+});
+
+test("refreshes a pending registration to approved without a Master callback", async () => {
+  vi.mocked(masterSettingsApi.get).mockResolvedValueOnce({
+    ...savedSettings,
+    registration_status: "pending"
+  });
+  vi.mocked(masterSettingsApi.registrationStatus).mockResolvedValueOnce({
+    status: "approved"
+  });
+
+  renderPage();
+
+  expect(await screen.findByText("已批准")).toBeInTheDocument();
+  expect(masterSettingsApi.registrationStatus).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText("待管理员审批")).not.toBeInTheDocument();
 });
 
 test("generates a 32-byte Base64URL Token and copies it immediately", async () => {
@@ -147,6 +170,7 @@ test("generates a 32-byte Base64URL Token and copies it immediately", async () =
   const generated = `${"_".repeat(42)}8`;
   expect(random).toHaveBeenCalled();
   expect(screen.getByLabelText("Token")).toHaveValue(generated);
+  expect(screen.getByRole("button", { name: /申请接入$/ })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: /复制 Token$/ }));
   expect(writeText).toHaveBeenCalledWith(generated);
 });

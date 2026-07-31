@@ -18,7 +18,7 @@ import {
   Tag
 } from "antd";
 import axios from "axios";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { apiMessage, masterSettingsApi } from "../../shared/api/client";
 import type {
@@ -69,14 +69,30 @@ function generateToken(): string {
 
 export function MasterSettingsPage() {
   const [form] = Form.useForm<MasterSettingsForm>();
-  const settings = useQuery({ queryKey: ["master-settings"], queryFn: masterSettingsApi.get });
+  const initialized = useRef(false);
+  const settings = useQuery({
+    queryKey: ["master-settings"],
+    queryFn: async () => {
+      const current = await masterSettingsApi.get();
+      if (current.registration_status !== "pending") return current;
+      const registration = await masterSettingsApi.registrationStatus();
+      return { ...current, registration_status: registration.status };
+    },
+    refetchInterval: (query) =>
+      query.state.data?.registration_status === "pending" ? 5_000 : false
+  });
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [registering, setRegistering] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   useEffect(() => {
-    if (settings.data) form.setFieldsValue(toFormValues(settings.data));
+    if (settings.data && !initialized.current) {
+      form.setFieldsValue(toFormValues(settings.data));
+      initialized.current = true;
+      setHasUnsavedChanges(false);
+    }
   }, [form, settings.data]);
 
   async function payload(): Promise<MasterSettingInput> {
@@ -102,6 +118,7 @@ export function MasterSettingsPage() {
       setSaving(true);
       const updated = await masterSettingsApi.update({ ...values, token: values.token ?? "" });
       form.setFieldsValue(toFormValues(updated));
+      setHasUnsavedChanges(false);
       await settings.refetch();
     } catch (requestError) {
       setError(masterSettingsMessage(requestError, "save"));
@@ -114,8 +131,6 @@ export function MasterSettingsPage() {
     try {
       setError(null);
       setRegistering(true);
-      const values = await payload();
-      await masterSettingsApi.update(values);
       await masterSettingsApi.register();
       form.setFieldValue("token", "");
       await settings.refetch();
@@ -128,6 +143,7 @@ export function MasterSettingsPage() {
 
   function createToken() {
     form.setFieldValue("token", generateToken());
+    setHasUnsavedChanges(true);
     void form.validateFields(["token"]);
   }
 
@@ -158,6 +174,9 @@ export function MasterSettingsPage() {
             {settings.data.registration_status === "pending" && (
               <Tag color="processing">待管理员审批</Tag>
             )}
+            {settings.data.registration_status === "approved" && (
+              <Tag color="success">已批准</Tag>
+            )}
             <Tag>{runtimeStatusLabels[settings.data.runtime_status]}</Tag>
           </Space>
         )}
@@ -176,7 +195,12 @@ export function MasterSettingsPage() {
             </div>
           </section>
         )}
-        <Form form={form} layout="vertical" onFinish={save}>
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={save}
+          onValuesChange={() => setHasUnsavedChanges(true)}
+        >
           <div className="master-settings-form-heading">
             <h2>连接配置</h2>
             <p>设置主节点地址和用于身份验证的访问令牌。</p>
@@ -242,6 +266,7 @@ export function MasterSettingsPage() {
             <Button
               icon={<FormOutlined />}
               loading={registering}
+              disabled={hasUnsavedChanges || !settings.data?.has_token}
               onClick={register}
             >
               申请接入

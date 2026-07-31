@@ -118,3 +118,59 @@ def test_registration_is_separate_from_connection_test_and_persists_pending_stat
         }
     ]
     assert "token" not in json.dumps(submitted)
+
+
+def test_pending_registration_refreshes_to_approved_from_master(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeRegistrationClient:
+        def __init__(self, base_url: str, node_id: str, token: str) -> None:
+            assert base_url == "http://master.example.com:8001"
+            assert len(node_id) == 36
+            assert token == "registration-secret-token-value-123"
+
+        async def submit_registration(self, payload: dict[str, Any]) -> dict[str, Any]:
+            del payload
+            return {"status": "pending"}
+
+        async def get_registration_status(self) -> dict[str, Any]:
+            return {"status": "approved"}
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "app.api.v1.master_settings.MasterClient",
+        FakeRegistrationClient,
+    )
+    app = create_app(settings)
+    with TestClient(app) as client:
+        headers = _auth_headers(client)
+        app.state.master_runtime.start_worker = False
+        saved = client.put(
+            "/api/v1/master-settings",
+            headers=headers,
+            json={
+                "scheme": "http",
+                "host": "master.example.com",
+                "port": 8001,
+                "token": "registration-secret-token-value-123",
+            },
+        )
+        submitted = client.post(
+            "/api/v1/master-settings/registration",
+            headers=headers,
+        )
+        synchronized = client.post(
+            "/api/v1/master-settings/registration/status",
+            headers=headers,
+        )
+        refreshed = client.get("/api/v1/master-settings", headers=headers)
+
+    assert saved.status_code == 200
+    assert submitted.status_code == 202
+    assert synchronized.status_code == 200
+    assert synchronized.json() == {"status": "approved"}
+    assert refreshed.status_code == 200
+    assert refreshed.json()["registration_status"] == "approved"

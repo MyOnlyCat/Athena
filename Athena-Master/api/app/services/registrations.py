@@ -14,6 +14,7 @@ from app.services.crypto import CredentialCipher
 from app.services.signing import verify_request_signature
 
 REGISTRATION_PATH = "/api/node/v1/registration-applications"
+REGISTRATION_STATUS_PATH = "/api/node/v1/registration-applications/status"
 TIMESTAMP_WINDOW_SECONDS = 300
 
 
@@ -107,6 +108,59 @@ class RegistrationService:
             ).all()
         )
         return applications, total
+
+    async def status(
+        self,
+        *,
+        body: bytes,
+        node_id: str,
+        timestamp: str,
+        nonce: str,
+        signature: str,
+        received_at: datetime,
+    ) -> str:
+        try:
+            timestamp_seconds = int(timestamp)
+        except (ValueError, TypeError):
+            raise AppError(
+                "REGISTRATION_AUTH_INVALID",
+                "注册状态查询认证头无效",
+                status_code=422,
+            ) from None
+        if (
+            not NONCE_PATTERN.fullmatch(nonce)
+            or not SIGNATURE_PATTERN.fullmatch(signature)
+            or abs(received_at.timestamp() - timestamp_seconds)
+            > TIMESTAMP_WINDOW_SECONDS
+        ):
+            raise AppError(
+                "REGISTRATION_AUTH_INVALID",
+                "注册状态查询认证头无效",
+                status_code=401,
+            )
+        node = await self.session.get(AccessNode, node_id)
+        if node is None:
+            raise AppError(
+                "NODE_NOT_APPROVED",
+                "节点尚未批准",
+                status_code=404,
+            )
+        token = self.cipher.decrypt(node.encrypted_token)
+        if not verify_request_signature(
+            secret=token,
+            method="POST",
+            path_with_query=REGISTRATION_STATUS_PATH,
+            timestamp=timestamp,
+            nonce=nonce,
+            body=body,
+            signature=signature,
+        ):
+            raise AppError(
+                "REGISTRATION_TOKEN_INVALID",
+                "Token 与已批准节点不匹配",
+                status_code=401,
+            )
+        return "approved"
 
     async def approve(self, application_id: str, token: str) -> AccessNode:
         application = await self.session.get(RegistrationApplication, application_id)

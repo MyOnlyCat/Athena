@@ -9,6 +9,7 @@ from app.schemas.registration import (
     RegistrationApplicationPage,
     RegistrationApplicationResponse,
     RegistrationApproval,
+    RegistrationStatusResponse,
     RegistrationSubmitted,
 )
 from app.services.registrations import RegistrationService
@@ -48,6 +49,30 @@ async def submit_registration_application(
         received_at=datetime.now(UTC),
     )
     return RegistrationSubmitted(status="pending")
+
+
+@node_router.post(
+    "/registration-applications/status",
+    response_model=RegistrationStatusResponse,
+)
+async def get_registration_status(
+    request: Request,
+    session: SessionDep,
+    node_id: Annotated[str, Header(alias="X-Node-Id")],
+    timestamp_value: Annotated[str, Header(alias="X-Timestamp")],
+    nonce: Annotated[str, Header(alias="X-Nonce")],
+    signature: Annotated[str, Header(alias="X-Signature")],
+) -> RegistrationStatusResponse:
+    body = await request.body()
+    registration_status = await service(request, session).status(
+        body=body,
+        node_id=node_id,
+        timestamp=timestamp_value,
+        nonce=nonce,
+        signature=signature,
+        received_at=datetime.now(UTC),
+    )
+    return RegistrationStatusResponse(status=registration_status)
 
 
 @admin_router.get("", response_model=RegistrationApplicationPage)

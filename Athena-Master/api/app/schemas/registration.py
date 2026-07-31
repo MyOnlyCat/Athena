@@ -35,6 +35,10 @@ class RegistrationSubmitted(BaseModel):
     status: Literal["pending"]
 
 
+class RegistrationStatusResponse(BaseModel):
+    status: Literal["approved"]
+
+
 class RegistrationApplicationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

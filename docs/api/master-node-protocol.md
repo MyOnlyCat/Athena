@@ -31,6 +31,15 @@ Token 不匹配时返回 `401 REGISTRATION_TOKEN_INVALID`，申请保持待审�
 创建已启用接入节点，并使用 `ATHENA_MASTER_CREDENTIAL_KEY` 加密保存 Token。
 Token 明文、密文都不会通过 API 返回。
 
+Node 在本地处于待审批状态时，定期调用：
+
+`POST /api/node/v1/registration-applications/status`
+
+请求正文为 `{}`，并使用节点 Token 生成 HMAC 认证头。Master 仅在节点已经获批且
+签名与加密保存的 Token 匹配时返回 `{"status":"approved"}`；审批前返回
+`404 NODE_NOT_APPROVED`，Token 不匹配返回 `401 REGISTRATION_TOKEN_INVALID`。
+Node 将成功结果持久化为 `approved`，因此审批状态同步不需要 Master 回连。
+
 ## 节点认证
 
 每个子节点在主节点配置唯一 `node_id` 和共享 `node_token`。所有请求包含：
@@ -89,8 +98,10 @@ signature=89fc0647ffaec69188abcac1bc0eb747ac6bf869a35aac18753dfa9ee6e70caa
 | 方法 | 路径 | 行为 |
 | --- | --- | --- |
 | `GET` | `/api/v1/master-settings` | 返回有效地址、`has_token` 和 `runtime_status` |
-| `POST` | `/api/v1/master-settings/test` | 向候选地址发送签名心跳；不保存、不应用 |
-| `PUT` | `/api/v1/master-settings` | 测试、加密保存并即时应用 |
+| `POST` | `/api/v1/master-settings/test` | 访问候选 Master 公共健康接口；不保存、不应用 |
+| `PUT` | `/api/v1/master-settings` | 加密保存并即时应用 |
+| `POST` | `/api/v1/master-settings/registration` | 使用已保存配置申请接入 |
+| `POST` | `/api/v1/master-settings/registration/status` | 主动同步审批状态 |
 
 `ATHENA_MASTER_NODE_URL` 和 `ATHENA_NODE_TOKEN` 是首次启动默认值。数据库尚无
 `master_settings` 行时使用它们；成功保存后，数据库中的协议、主机、端口和
@@ -108,8 +119,9 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
 4. 停止并关闭旧工作循环、执行器和 HTTP 客户端，再激活候选运行时。
 
 保存不要求 Node 已获批准或心跳成功，因此可以先持久化配置再申请接入；连接测试仍是
-独立且不保存的操作。候选准备或数据库提交失败时不替换旧运行时，数据库提交失败时
-还会清理候选资源。`registration_status` 为 `not_submitted` 或 `pending`，
+独立且不保存的操作。页面表单有未保存修改时禁用“申请接入”，申请接口只读取已保存
+配置。候选准备或数据库提交失败时不替换旧运行时，数据库提交失败时还会清理候选资源。
+`registration_status` 为 `not_submitted`、`pending` 或 `approved`，
 `runtime_status` 为 `unconfigured`、`connecting`、`online`、`error` 或 `stopped`。
 
 ## 心跳与完整主机清单

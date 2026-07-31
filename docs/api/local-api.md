@@ -73,7 +73,9 @@ API 启动后立即对全部主机执行一次 SSH 探活，之后按全局间�
 |---|---|---|
 | GET | `/master-settings` | 返回当前有效地址、`has_token` 和运行状态 |
 | POST | `/master-settings/test` | 测试候选连接，不保存、不应用 |
-| PUT | `/master-settings` | 测试、保存并即时应用候选连接 |
+| PUT | `/master-settings` | 保存并即时应用候选连接 |
+| POST | `/master-settings/registration` | 使用已保存配置申请接入 |
+| POST | `/master-settings/registration/status` | 主动同步 Master 审批状态 |
 
 请求体：
 
@@ -98,11 +100,15 @@ API 启动后立即对全部主机执行一次 SSH 探活，之后按全局间�
 `ATHENA_MASTER_NODE_URL` 和 `ATHENA_NODE_TOKEN` 得到初始配置；一旦成功保存，
 数据库行整体优先于环境变量，重启后仍然生效。
 
-`POST /master-settings/test` 用候选地址发送一次签名心跳；Token 留空时使用当前
-有效值。`PUT /master-settings` 串行完成候选连接测试、候选运行时准备、加密保存
-和数据库提交，然后停止旧轮询客户端并激活新客户端。连接测试、准备或提交失败时，
+`POST /master-settings/test` 访问候选地址的 Master 公共健康接口；Token 留空时使用
+当前有效值。`PUT /master-settings` 串行完成候选运行时准备、加密保存和数据库提交，
+然后停止旧轮询客户端并激活新客户端。连接测试、准备或提交失败时，
 旧数据库配置与旧运行时保持不变。连接失败返回
 `MASTER_CONNECTION_FAILED`，校验失败返回 422。
+
+修改页面表单后必须先保存并应用，才能申请接入。待审批时页面每 5 秒调用本地状态同步
+接口；Node 使用已保存 Token 向 Master 发送签名查询，仅在 Master 验证节点已经批准
+后把本地 `registration_status` 更新为 `approved`。
 
 `runtime_status` 是稳定枚举：`unconfigured` 表示缺少有效主机或 Token；
 `connecting` 表示运行时正在等待首次成功同步；`online` 表示最近一次心跳和任务

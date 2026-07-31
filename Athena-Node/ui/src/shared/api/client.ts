@@ -10,6 +10,7 @@ import type {
   HostInput,
   HostProbeSetting,
   MasterConnectionTestResponse,
+  RegistrationStatusResponse,
   RegistrationApplicationResponse,
   MasterSettingInput,
   MasterSettingResponse,
@@ -149,6 +150,12 @@ export const masterSettingsApi = {
     (
       await api.post<RegistrationApplicationResponse>(
         "/master-settings/registration"
+      )
+    ).data,
+  registrationStatus: async () =>
+    (
+      await api.post<RegistrationStatusResponse>(
+        "/master-settings/registration/status"
       )
     ).data
 };

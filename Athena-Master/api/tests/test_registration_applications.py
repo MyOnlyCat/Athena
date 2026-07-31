@@ -61,6 +61,34 @@ def signed_registration(
     }
 
 
+def signed_status(token: str, node_id: str) -> tuple[bytes, dict[str, str]]:
+    body = b"{}"
+    timestamp = str(int(datetime.now(UTC).timestamp()))
+    nonce = "abcdef0123456789abcdef0123456789"
+    path = "/api/node/v1/registration-applications/status"
+    canonical = "\n".join(
+        (
+            "POST",
+            path,
+            timestamp,
+            nonce,
+            hashlib.sha256(body).hexdigest(),
+        )
+    )
+    signature = hmac.new(
+        token.encode(),
+        canonical.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return body, {
+        "Content-Type": "application/json",
+        "X-Node-Id": node_id,
+        "X-Timestamp": timestamp,
+        "X-Nonce": nonce,
+        "X-Signature": signature,
+    }
+
+
 @pytest.mark.asyncio
 async def test_registration_is_stored_as_untrusted_and_approved_from_exact_bytes(
     client: AsyncClient,
@@ -73,6 +101,24 @@ async def test_registration_is_stored_as_untrusted_and_approved_from_exact_bytes
         "/api/node/v1/registration-applications",
         content=body,
         headers=headers,
+    )
+    pending_status_body, pending_status_headers = signed_status(
+        token,
+        headers["X-Node-Id"],
+    )
+    pending_status = await client.post(
+        "/api/node/v1/registration-applications/status",
+        content=pending_status_body,
+        headers=pending_status_headers,
+    )
+    pending_status_body, pending_status_headers = signed_status(
+        token,
+        headers["X-Node-Id"],
+    )
+    pending_status = await client.post(
+        "/api/node/v1/registration-applications/status",
+        content=pending_status_body,
+        headers=pending_status_headers,
     )
     async with app.state.session_factory() as session:
         stored_application = (
@@ -102,6 +148,30 @@ async def test_registration_is_stored_as_untrusted_and_approved_from_exact_bytes
         headers=admin_headers,
         json={"token": token},
     )
+    status_body, status_headers = signed_status(token, headers["X-Node-Id"])
+    registration_status = await client.post(
+        "/api/node/v1/registration-applications/status",
+        content=status_body,
+        headers=status_headers,
+    )
+    wrong_status_body, wrong_status_headers = signed_status(
+        "wrong-registration-token-value-123",
+        headers["X-Node-Id"],
+    )
+    wrong_registration_status = await client.post(
+        "/api/node/v1/registration-applications/status",
+        content=wrong_status_body,
+        headers=wrong_status_headers,
+    )
+    wrong_status_body, wrong_status_headers = signed_status(
+        "wrong-registration-token-value-123",
+        headers["X-Node-Id"],
+    )
+    wrong_registration_status = await client.post(
+        "/api/node/v1/registration-applications/status",
+        content=wrong_status_body,
+        headers=wrong_status_headers,
+    )
     async with app.state.session_factory() as session:
         encrypted_token = (
             await session.execute(text("SELECT encrypted_token FROM access_nodes"))
@@ -109,6 +179,10 @@ async def test_registration_is_stored_as_untrusted_and_approved_from_exact_bytes
 
     assert submitted.status_code == 202
     assert submitted.json()["status"] == "pending"
+    assert pending_status.status_code == 404
+    assert pending_status.json()["code"] == "NODE_NOT_APPROVED"
+    assert pending_status.status_code == 404
+    assert pending_status.json()["code"] == "NODE_NOT_APPROVED"
     assert token not in submitted.text
     assert stored_application.raw_body == body
     assert stored_application.auth_signature == headers["X-Signature"]
@@ -134,6 +208,12 @@ async def test_registration_is_stored_as_untrusted_and_approved_from_exact_bytes
     assert approved.json()["management_status"] == "active"
     assert approved.json()["node_id"] == headers["X-Node-Id"]
     assert approved.json()["approved_at"].endswith("Z")
+    assert registration_status.status_code == 200
+    assert registration_status.json() == {"status": "approved"}
+    assert wrong_registration_status.status_code == 401
+    assert wrong_registration_status.json()["code"] == "REGISTRATION_TOKEN_INVALID"
+    assert wrong_registration_status.status_code == 401
+    assert wrong_registration_status.json()["code"] == "REGISTRATION_TOKEN_INVALID"
     assert token not in approved.text
     assert encrypted_token != token
     assert (

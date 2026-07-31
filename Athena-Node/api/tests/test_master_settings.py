@@ -18,7 +18,6 @@ from app.core.errors import AppError
 from app.main import create_app
 from app.services.crypto import CredentialCipher
 from app.services.master_client import MasterClient
-from app.services.signing import sign_request
 
 
 def auth_headers(client: TestClient) -> dict[str, str]:
@@ -592,22 +591,17 @@ def test_connection_test_with_empty_token_uses_saved_token_without_applying(
 
 
 @pytest.mark.asyncio
-async def test_master_client_connection_test_is_signed() -> None:
+async def test_master_client_connection_test_uses_public_health_endpoint() -> None:
     observed: list[httpx.Request] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
         observed.append(request)
-        expected = sign_request(
-            secret="node-secret",
-            method=request.method,
-            path_with_query=request.url.raw_path.decode(),
-            timestamp=request.headers["X-Timestamp"],
-            nonce=request.headers["X-Nonce"],
-            body=request.content,
-        )
-        assert request.headers["X-Node-Id"] == "node-1"
-        assert request.headers["X-Signature"] == expected
-        return httpx.Response(200, json={"accepted_at": "2026-07-30T12:00:00Z"})
+        if request.method == "GET" and request.url.path == "/api/v1/health":
+            return httpx.Response(
+                200,
+                json={"status": "ok", "service": "athena-master-api"},
+            )
+        return httpx.Response(404)
 
     async with httpx.AsyncClient(
         base_url="https://master.example.com:9443",
@@ -621,9 +615,10 @@ async def test_master_client_connection_test_is_signed() -> None:
         )
         result = await master.test_connection()
 
-    assert result == {"accepted_at": "2026-07-30T12:00:00Z"}
+    assert result == {"status": "ok", "service": "athena-master-api"}
     assert len(observed) == 1
-    assert observed[0].url.path == "/api/node/v1/nodes/heartbeat"
+    assert observed[0].method == "GET"
+    assert observed[0].url.path == "/api/v1/health"
 
 
 @pytest.mark.asyncio

@@ -529,6 +529,76 @@
         ]
       }
     },
+    "/api/v1/hosts/probe-settings": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "Get Probe Settings",
+        "operationId": "get_probe_settings_api_v1_hosts_probe_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostProbeSettingResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "Update Probe Settings",
+        "operationId": "update_probe_settings_api_v1_hosts_probe_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostProbeSettingInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostProbeSettingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/hosts/{host_id}": {
       "get": {
         "tags": [
@@ -877,6 +947,58 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/master-settings/registration": {
+      "post": {
+        "tags": [
+          "master-settings"
+        ],
+        "summary": "Submit Registration Application",
+        "operationId": "submit_registration_application_api_v1_master_settings_registration_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationApplicationResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/master-settings/registration/status": {
+      "post": {
+        "tags": [
+          "master-settings"
+        ],
+        "summary": "Synchronize Registration Status",
+        "operationId": "synchronize_registration_status_api_v1_master_settings_registration_status_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationStatusResponse"
                 }
               }
             }
@@ -1590,6 +1712,36 @@
         ],
         "title": "HostCreate"
       },
+      "HostProbeSettingInput": {
+        "properties": {
+          "interval_minutes": {
+            "type": "integer",
+            "maximum": 1440.0,
+            "minimum": 1.0,
+            "title": "Interval Minutes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "interval_minutes"
+        ],
+        "title": "HostProbeSettingInput"
+      },
+      "HostProbeSettingResponse": {
+        "properties": {
+          "interval_minutes": {
+            "type": "integer",
+            "maximum": 1440.0,
+            "minimum": 1.0,
+            "title": "Interval Minutes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "interval_minutes"
+        ],
+        "title": "HostProbeSettingResponse"
+      },
       "HostResponse": {
         "properties": {
           "name": {
@@ -1855,6 +2007,14 @@
       },
       "MasterSettingResponse": {
         "properties": {
+          "node_id": {
+            "type": "string",
+            "title": "Node Id"
+          },
+          "node_name": {
+            "type": "string",
+            "title": "Node Name"
+          },
           "scheme": {
             "type": "string",
             "enum": [
@@ -1885,15 +2045,27 @@
               "stopped"
             ],
             "title": "Runtime Status"
+          },
+          "registration_status": {
+            "type": "string",
+            "enum": [
+              "not_submitted",
+              "pending",
+              "approved"
+            ],
+            "title": "Registration Status"
           }
         },
         "type": "object",
         "required": [
+          "node_id",
+          "node_name",
           "scheme",
           "host",
           "port",
           "has_token",
-          "runtime_status"
+          "runtime_status",
+          "registration_status"
         ],
         "title": "MasterSettingResponse"
       },
@@ -1911,6 +2083,37 @@
           "password"
         ],
         "title": "PasswordReset"
+      },
+      "RegistrationApplicationResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "pending",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "RegistrationApplicationResponse"
+      },
+      "RegistrationStatusResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved"
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "RegistrationStatusResponse"
       },
       "SSHTestResponse": {
         "properties": {

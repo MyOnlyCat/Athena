@@ -13,6 +13,7 @@ from app.schemas.master_setting import (
     MasterSettingInput,
     MasterSettingResponse,
     RegistrationApplicationResponse,
+    RegistrationStatusResponse,
 )
 from app.services.crypto import CredentialCipher
 from app.services.master_client import MasterClient
@@ -203,3 +204,40 @@ async def submit_registration_application(
         )
     await settings_service.set_registration_pending()
     return RegistrationApplicationResponse(status="pending")
+
+
+@router.post(
+    "/registration/status",
+    response_model=RegistrationStatusResponse,
+)
+async def synchronize_registration_status(
+    request: Request,
+    session: SessionDep,
+    _: CurrentUserDep,
+) -> RegistrationStatusResponse:
+    settings_service = service(request, session)
+    row = await settings_service.get_row()
+    if row is None or row.registration_status != "pending":
+        return RegistrationStatusResponse(
+            status="approved"
+            if row is not None and row.registration_status == "approved"
+            else "pending"
+        )
+    config = await settings_service.get_effective()
+    identity = request.app.state.node_identity
+    client = MasterClient(
+        config.base_url,
+        identity.node_id,
+        config.token,
+    )
+    try:
+        async with asyncio.timeout(3):
+            result = await client.get_registration_status()
+    except Exception:
+        return RegistrationStatusResponse(status="pending")
+    finally:
+        await client.close()
+    if result.get("status") == "approved":
+        await settings_service.set_registration_status("approved")
+        return RegistrationStatusResponse(status="approved")
+    return RegistrationStatusResponse(status="pending")
