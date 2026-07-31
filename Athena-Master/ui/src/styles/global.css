@@ -195,6 +195,7 @@ button, input { font: inherit; }
 }
 .page-header h1 { margin: 0 0 8px; font-size: 30px; }
 .page-header p { margin: 0; }
+.table-toolbar { margin-bottom: 18px; }
 .content-card {
   padding: 20px;
   background: var(--panel-bg);

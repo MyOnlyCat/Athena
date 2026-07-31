@@ -1,7 +1,8 @@
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import Depends, Request
+from fastapi import Depends, Header, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,3 +52,13 @@ async def get_current_user(context: AuthContextDep) -> User:
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+
+def enforce_node_request_limit(
+    request: Request,
+    node_id: Annotated[str, Header(alias="X-Node-Id")],
+) -> None:
+    request.app.state.node_request_throttle.check_and_record(
+        node_id,
+        datetime.now(UTC),
+    )

@@ -2,7 +2,9 @@ import axios, { AxiosError } from "axios";
 
 import type {
   AccessNode,
+  AccessNodePage,
   ApiErrorBody,
+  NodeListParams,
   RegistrationApplicationPage,
   User,
   UserPage
@@ -97,5 +99,11 @@ export const registrationApplicationsApi = {
         `/registration-applications/${id}/restore`
       )
     ).data;
+  }
+};
+
+export const nodesApi = {
+  async list(params: NodeListParams) {
+    return (await api.get<AccessNodePage>("/nodes", { params })).data;
   }
 };

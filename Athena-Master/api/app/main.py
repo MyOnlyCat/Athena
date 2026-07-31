@@ -11,6 +11,8 @@ from starlette.exceptions import HTTPException
 
 from app.api.v1.administrators import router as administrators_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.nodes import admin_router as nodes_admin_router
+from app.api.v1.nodes import node_router as nodes_node_router
 from app.api.v1.registration_applications import (
     admin_router as registration_admin_router,
 )
@@ -26,6 +28,7 @@ from app.core.errors import (
     validation_error_handler,
 )
 from app.services.auth import AuthService, LoginThrottle
+from app.services.heartbeats import NodeRequestThrottle
 from app.services.registrations import (
     RegistrationService,
     RegistrationThrottle,
@@ -96,6 +99,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     registration_write_lock = Lock()
     app.state.registration_write_lock = registration_write_lock
     app.state.registration_throttle = RegistrationThrottle()
+    app.state.node_write_lock = Lock()
+    app.state.node_request_throttle = NodeRequestThrottle()
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(HTTPException, http_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(
@@ -106,6 +111,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(administrators_router, prefix="/api/v1")
     app.include_router(registration_admin_router, prefix="/api/v1")
     app.include_router(registration_node_router, prefix="/api/node/v1")
+    app.include_router(nodes_admin_router, prefix="/api/v1")
+    app.include_router(nodes_node_router, prefix="/api/node/v1")
 
     @app.get("/api/v1/health")
     async def health() -> dict[str, str]:
