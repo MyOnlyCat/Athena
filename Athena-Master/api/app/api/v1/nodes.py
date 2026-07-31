@@ -10,11 +10,9 @@ from app.schemas.heartbeat import (
     ConnectivityStatus,
     HeartbeatAccepted,
 )
-from app.services.heartbeats import (
-    AccessNodeQueryService,
-    HeartbeatService,
-    connectivity_status,
-)
+from app.services.heartbeats import HeartbeatService
+from app.services.node_status import connectivity_status
+from app.services.nodes import AccessNodeQueryService
 
 node_router = APIRouter(tags=["node-heartbeats"])
 admin_router = APIRouter(prefix="/nodes", tags=["nodes"])

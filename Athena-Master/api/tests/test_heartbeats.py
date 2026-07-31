@@ -258,6 +258,18 @@ async def test_heartbeat_rejects_unknown_node_bad_nonce_protocol_and_fast_repeat
         "NODE_PROTOCOL_UNSUPPORTED",
     )
     assert unsupported.json()["message"] == "节点协议版本不受支持"
+    unsupported_replay = await client.post(
+        HEARTBEAT_PATH,
+        content=unsupported_body,
+        headers=signed_headers(
+            body=unsupported_body,
+            nonce="33333333333333333333333333333333",
+        ),
+    )
+    assert (unsupported_replay.status_code, unsupported_replay.json()["code"]) == (
+        409,
+        "NODE_NONCE_REPLAYED",
+    )
 
     first_body = heartbeat_body(reported_name="第一次")
     first = await client.post(
@@ -279,6 +291,18 @@ async def test_heartbeat_rejects_unknown_node_bad_nonce_protocol_and_fast_repeat
         ),
     )
     assert (second.status_code, second.json()["code"]) == (429, "NODE_RATE_LIMITED")
+    second_replay = await client.post(
+        HEARTBEAT_PATH,
+        content=second_body,
+        headers=signed_headers(
+            body=second_body,
+            nonce="55555555555555555555555555555555",
+        ),
+    )
+    assert (second_replay.status_code, second_replay.json()["code"]) == (
+        409,
+        "NODE_NONCE_REPLAYED",
+    )
 
 
 @pytest.mark.asyncio
@@ -317,31 +341,23 @@ async def test_replay_protection_survives_master_restart(settings: Settings) -> 
 
 
 @pytest.mark.asyncio
-async def test_node_api_rejects_the_twenty_first_request_in_one_minute(
+async def test_node_api_limit_is_shared_across_status_and_heartbeat_routes(
     client: AsyncClient,
-    app: FastAPI,
 ) -> None:
     admin_headers = await approve_node(client)
-    for index in range(20):
-        body = heartbeat_body(reported_name=f"第 {index + 1} 次")
+    status_body = b"{}"
+    status_path = "/api/node/v1/registration-applications/status"
+    for index in range(19):
         response = await client.post(
-            HEARTBEAT_PATH,
-            content=body,
-            headers=signed_headers(body=body, nonce=f"{index:032x}"),
+            status_path,
+            content=status_body,
+            headers=signed_headers(
+                body=status_body,
+                nonce=f"{index + 100:032x}",
+                path=status_path,
+            ),
         )
         assert response.status_code == 200
-        async with app.state.session_factory() as session:
-            await session.execute(
-                text(
-                    "UPDATE access_nodes SET last_heartbeat_at = :last_heartbeat "
-                    "WHERE node_id = :node_id"
-                ),
-                {
-                    "last_heartbeat": datetime.now(UTC) - timedelta(seconds=11),
-                    "node_id": NODE_ID,
-                },
-            )
-            await session.commit()
 
     limited_body = heartbeat_body(reported_name="不应被接受")
     limited = await client.post(
@@ -353,7 +369,21 @@ async def test_node_api_rejects_the_twenty_first_request_in_one_minute(
         ),
     )
     assert (limited.status_code, limited.json()["code"]) == (429, "NODE_RATE_LIMITED")
-    assert (await listed_node(client, admin_headers))["reported_name"] == "第 20 次"
+    replayed = await client.post(
+        HEARTBEAT_PATH,
+        content=limited_body,
+        headers=signed_headers(
+            body=limited_body,
+            nonce="ffffffffffffffffffffffffffffffff",
+        ),
+    )
+    assert (replayed.status_code, replayed.json()["code"]) == (
+        409,
+        "NODE_NONCE_REPLAYED",
+    )
+    node = await listed_node(client, admin_headers)
+    assert node["reported_name"] == "注册时名称"
+    assert node["last_heartbeat_at"] is None
 
 
 @pytest.mark.asyncio

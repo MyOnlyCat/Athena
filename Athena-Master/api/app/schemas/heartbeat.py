@@ -1,15 +1,13 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.time import as_utc
+
 ConnectivityStatus = Literal["online", "stale", "offline"]
 ManagementStatus = Literal["active", "disabled", "rejected", "pending"]
-
-
-def utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=value.tzinfo or UTC).astimezone(UTC)
 
 
 class HeartbeatNode(BaseModel):
@@ -53,7 +51,7 @@ class HeartbeatAccepted(BaseModel):
     @field_validator("accepted_at")
     @classmethod
     def normalize_accepted_at(cls, value: datetime) -> datetime:
-        return utc(value)
+        return as_utc(value)
 
 
 class AccessNodeListItem(BaseModel):
@@ -71,7 +69,7 @@ class AccessNodeListItem(BaseModel):
     @field_validator("approved_at", "last_heartbeat_at")
     @classmethod
     def normalize_timestamps(cls, value: datetime | None) -> datetime | None:
-        return utc(value) if value is not None else None
+        return as_utc(value) if value is not None else None
 
 
 class AccessNodePage(BaseModel):

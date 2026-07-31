@@ -1,9 +1,9 @@
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 
-from app.api.deps import CurrentUserDep, SessionDep
+from app.api.deps import CurrentUserDep, SessionDep, enforce_node_request_limit
 from app.schemas.registration import (
     AccessNodeResponse,
     RegistrationApplicationPage,
@@ -15,7 +15,10 @@ from app.schemas.registration import (
 )
 from app.services.registrations import RegistrationService
 
-node_router = APIRouter(tags=["node-registration"])
+node_router = APIRouter(
+    tags=["node-registration"],
+    dependencies=[Depends(enforce_node_request_limit)],
+)
 admin_router = APIRouter(
     prefix="/registration-applications",
     tags=["registration-applications"],

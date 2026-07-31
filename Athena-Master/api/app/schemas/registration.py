@@ -1,9 +1,11 @@
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.core.time import as_utc
 
 RegistrationApplicationStatus = Literal[
     "pending",
@@ -63,7 +65,7 @@ class RegistrationApplicationResponse(BaseModel):
     @field_validator("received_at")
     @classmethod
     def normalize_received_at(cls, value: datetime) -> datetime:
-        return value.replace(tzinfo=value.tzinfo or UTC).astimezone(UTC)
+        return as_utc(value)
 
 
 class RegistrationApplicationPage(BaseModel):
@@ -94,7 +96,7 @@ class AccessNodeResponse(BaseModel):
     @field_validator("approved_at")
     @classmethod
     def normalize_approved_at(cls, value: datetime) -> datetime:
-        return value.replace(tzinfo=value.tzinfo or UTC).astimezone(UTC)
+        return as_utc(value)
 
 
 NONCE_PATTERN = re.compile(r"^[0-9a-f]{32}$")

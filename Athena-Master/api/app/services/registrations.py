@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import AppError
+from app.core.time import as_utc
 from app.models.registration import AccessNode, RegistrationApplication
 from app.schemas.registration import (
     NONCE_PATTERN,
@@ -28,10 +29,6 @@ TERMINAL_RETENTION_DAYS = 30
 NODE_RATE_WINDOW_SECONDS = 60
 IP_RATE_LIMIT = 10
 PENDING_APPLICATION_LIMIT = 1_000
-
-
-def _utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=value.tzinfo or UTC).astimezone(UTC)
 
 
 class RegistrationThrottle:
@@ -375,7 +372,7 @@ class RegistrationService:
                 "注册申请已处理",
                 status_code=409,
             )
-        received_at = _utc(application.received_at)
+        received_at = as_utc(application.received_at)
         if (
             abs(received_at.timestamp() - int(application.auth_timestamp))
             > TIMESTAMP_WINDOW_SECONDS

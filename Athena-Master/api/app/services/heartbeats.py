@@ -1,14 +1,15 @@
 from collections import defaultdict, deque
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from pydantic import ValidationError
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
+from app.core.time import as_utc
 from app.models.registration import AccessNode, NodeNonce
-from app.schemas.heartbeat import ConnectivityStatus, HeartbeatPayload
+from app.schemas.heartbeat import HeartbeatPayload
 from app.schemas.registration import NONCE_PATTERN, SIGNATURE_PATTERN
 from app.services.crypto import CredentialCipher
 from app.services.signing import verify_request_signature
@@ -18,24 +19,6 @@ NONCE_RETENTION_MINUTES = 10
 MIN_HEARTBEAT_INTERVAL_SECONDS = 10
 NODE_REQUEST_LIMIT_PER_MINUTE = 20
 SUPPORTED_PROTOCOL_VERSION = "v1"
-
-
-def utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=value.tzinfo or UTC).astimezone(UTC)
-
-
-def connectivity_status(
-    last_heartbeat_at: datetime | None,
-    now: datetime,
-) -> ConnectivityStatus:
-    if last_heartbeat_at is None:
-        return "offline"
-    age = utc(now) - utc(last_heartbeat_at)
-    if age < timedelta(seconds=120):
-        return "online"
-    if age <= timedelta(seconds=300):
-        return "stale"
-    return "offline"
 
 
 class NodeRequestThrottle:
@@ -118,10 +101,21 @@ class HeartbeatService:
                 status_code=409,
             )
 
+        self.session.add(NodeNonce(node_id=node_id, nonce=nonce, received_at=received_at))
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            raise AppError(
+                "NODE_NONCE_REPLAYED",
+                "节点 nonce 已被使用",
+                status_code=409,
+            ) from None
+
         self.throttle.check_and_record(node_id, received_at)
         if (
             node.last_heartbeat_at is not None
-            and received_at - utc(node.last_heartbeat_at)
+            and received_at - as_utc(node.last_heartbeat_at)
             < timedelta(seconds=MIN_HEARTBEAT_INTERVAL_SECONDS)
         ):
             raise AppError(
@@ -148,16 +142,7 @@ class HeartbeatService:
         node.hostname = payload.node.hostname
         node.software_version = payload.node.version
         node.last_heartbeat_at = received_at
-        self.session.add(NodeNonce(node_id=node_id, nonce=nonce, received_at=received_at))
-        try:
-            await self.session.commit()
-        except IntegrityError:
-            await self.session.rollback()
-            raise AppError(
-                "NODE_NONCE_REPLAYED",
-                "节点 nonce 已被使用",
-                status_code=409,
-            ) from None
+        await self.session.commit()
         return received_at
 
     @staticmethod
@@ -193,78 +178,3 @@ class HeartbeatService:
                 "心跳负载无效",
                 status_code=422,
             ) from None
-
-
-class AccessNodeQueryService:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def list_page(
-        self,
-        *,
-        page: int,
-        page_size: int,
-        search: str | None,
-        management_status: str | None,
-        requested_connectivity: ConnectivityStatus | None,
-        sort_by: str,
-        sort_order: str,
-        now: datetime,
-    ) -> tuple[list[AccessNode], int]:
-        query = select(AccessNode)
-        count_query = select(func.count()).select_from(AccessNode)
-        conditions = []
-        if search and search.strip():
-            pattern = f"%{search.strip()}%"
-            conditions.append(
-                or_(
-                    AccessNode.node_id.ilike(pattern),
-                    AccessNode.reported_name.ilike(pattern),
-                    AccessNode.hostname.ilike(pattern),
-                    AccessNode.software_version.ilike(pattern),
-                )
-            )
-        if management_status is not None:
-            conditions.append(AccessNode.management_status == management_status)
-        if requested_connectivity is not None:
-            online_cutoff = now - timedelta(seconds=120)
-            offline_cutoff = now - timedelta(seconds=300)
-            if requested_connectivity == "online":
-                conditions.append(AccessNode.last_heartbeat_at > online_cutoff)
-            elif requested_connectivity == "stale":
-                conditions.extend(
-                    (
-                        AccessNode.last_heartbeat_at <= online_cutoff,
-                        AccessNode.last_heartbeat_at >= offline_cutoff,
-                    )
-                )
-            else:
-                conditions.append(
-                    or_(
-                        AccessNode.last_heartbeat_at.is_(None),
-                        AccessNode.last_heartbeat_at < offline_cutoff,
-                    )
-                )
-        if conditions:
-            query = query.where(*conditions)
-            count_query = count_query.where(*conditions)
-
-        sort_columns = {
-            "reported_name": AccessNode.reported_name,
-            "hostname": AccessNode.hostname,
-            "software_version": AccessNode.software_version,
-            "approved_at": AccessNode.approved_at,
-            "last_heartbeat_at": AccessNode.last_heartbeat_at,
-        }
-        sort_column = sort_columns[sort_by]
-        ordering = sort_column.desc() if sort_order == "desc" else sort_column.asc()
-        query = query.order_by(ordering, AccessNode.node_id.asc())
-        total = int(await self.session.scalar(count_query) or 0)
-        nodes = list(
-            (
-                await self.session.scalars(
-                    query.offset((page - 1) * page_size).limit(page_size)
-                )
-            ).all()
-        )
-        return nodes, total

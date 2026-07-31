@@ -82,10 +82,10 @@ class InventorySynchronizer:
             raise
         self.last_success_at = datetime.now(UTC)
         self.status = "online"
-        self.changed.clear()
 
     async def run(self, stop: asyncio.Event, claim_callback: Any = None) -> None:
         while not stop.is_set():
+            self.changed.clear()
             try:
                 await self.sync_now()
                 if claim_callback is not None:
