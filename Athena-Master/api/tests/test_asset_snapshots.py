@@ -70,6 +70,23 @@ def reported_host(**overrides: object) -> dict[str, object]:
     return host
 
 
+def reported_hosts(
+    count: int,
+    *,
+    name_prefix: str,
+    address_suffix: int,
+) -> list[dict[str, object]]:
+    return [
+        reported_host(
+            id=str(UUID(int=index + 1)),
+            name=f"{name_prefix}-{index:03d}",
+            address=f"10.{index // 256}.{index % 256}.{address_suffix}",
+            is_local=index == 0,
+        )
+        for index in range(count)
+    ]
+
+
 async def allow_next_heartbeat(app: FastAPI) -> None:
     async with app.state.session_factory() as session:
         await session.execute(
@@ -339,15 +356,7 @@ async def test_snapshot_accepts_five_hundred_hosts_and_rejects_more_atomically(
     app: FastAPI,
 ) -> None:
     admin_headers = await approve_node(client)
-    hosts = [
-        reported_host(
-            id=str(UUID(int=index + 1)),
-            name=f"host-{index:03d}",
-            address=f"10.{index // 256}.{index % 256}.1",
-            is_local=index == 0,
-        )
-        for index in range(500)
-    ]
+    hosts = reported_hosts(500, name_prefix="host", address_suffix=1)
     maximum = heartbeat_with_hosts(hosts)
     accepted = await client.post(
         HEARTBEAT_PATH,
@@ -434,15 +443,7 @@ async def test_large_snapshot_does_not_hold_a_transaction_while_body_is_streamin
 ) -> None:
     admin_headers = await approve_node(client)
     body = heartbeat_with_hosts(
-        [
-            reported_host(
-                id=str(UUID(int=index + 1)),
-                name=f"streamed-{index:03d}",
-                address=f"10.{index // 256}.{index % 256}.2",
-                is_local=index == 0,
-            )
-            for index in range(500)
-        ]
+        reported_hosts(500, name_prefix="streamed", address_suffix=2)
     )
     first_chunk_sent = asyncio.Event()
     resume = asyncio.Event()
