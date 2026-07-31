@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, LargeBinary, String
+from sqlalchemy import DateTime, ForeignKey, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -61,4 +61,22 @@ class AccessNode(Base):
         DateTime(timezone=True),
         default=utc_now,
         nullable=False,
+    )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class NodeNonce(Base):
+    __tablename__ = "node_nonces"
+
+    node_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("access_nodes.node_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    nonce: Mapped[str] = mapped_column(String(32), primary_key=True)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+        index=True,
     )

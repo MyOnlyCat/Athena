@@ -28,6 +28,7 @@ def test_inventory_payload_omits_credentials_and_contains_runtime_state():
         ],
     )
 
+    assert payload["protocol_version"] == "v1"
     assert payload["node"]["id"] == "node-1"
     assert payload["hosts"][0] == {
         "id": "host-1",
@@ -136,3 +137,26 @@ async def test_poll_failure_after_heartbeat_reports_error() -> None:
 
     assert client.calls == 1
     assert sync.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_normal_inventory_sync_waits_sixty_seconds_between_heartbeats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = HeartbeatClient()
+    sync = synchronizer(client)
+    stop = asyncio.Event()
+    observed_timeouts: list[float] = []
+
+    async def stop_after_wait(awaitable: Any, **options: float) -> None:
+        observed_timeouts.append(options["timeout"])
+        awaitable.close()
+        stop.set()
+        raise TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", stop_after_wait)
+
+    await sync.run(stop)
+
+    assert observed_timeouts == [60]
+    assert client.calls == 1

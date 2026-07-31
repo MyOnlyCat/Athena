@@ -34,6 +34,7 @@ def build_inventory(
         "last_test_status",
     )
     return {
+        "protocol_version": "v1",
         "node": {
             "id": node_id,
             "name": node_name,

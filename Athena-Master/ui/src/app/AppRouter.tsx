@@ -6,6 +6,7 @@ import { useAuth } from "../features/auth/AuthContext";
 import { LoginPage } from "../features/auth/LoginPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { FoundationPage } from "../features/foundation/FoundationPage";
+import { NodesPage } from "../features/nodes/NodesPage";
 import { RegistrationApplicationsPage } from "../features/registrations/RegistrationApplicationsPage";
 import { AppShell } from "./AppShell";
 
@@ -18,16 +19,7 @@ export function AppRouter() {
       <Route element={<AppShell />}>
         <Route index element={<DashboardPage />} />
         <Route path="applications" element={<RegistrationApplicationsPage />} />
-        <Route
-          path="nodes"
-          element={
-            <FoundationPage
-              eyebrow="ACCESS NODES"
-              title="接入节点"
-              description="节点状态与主机资产将在后续需求中提供。"
-            />
-          }
-        />
+        <Route path="nodes" element={<NodesPage />} />
         <Route path="administrators" element={<AdministratorsPage />} />
         <Route
           path="audit"

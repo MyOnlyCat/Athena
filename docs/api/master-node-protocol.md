@@ -152,9 +152,10 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
 
 ```json
 {
+  "protocol_version": "v1",
   "node": {
-    "id": "node-shanghai-01",
-    "name": "上海子节点",
+    "id": "019d3a7e-7c42-7000-8000-000000000007",
+    "name": "上海接入节点",
     "version": "0.1.0",
     "hostname": "athena-node-01",
     "reported_at": "2026-07-29T14:00:00Z"
@@ -176,11 +177,34 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
 
 密码和密文不会上报。`hosts` 是节点的完整当前清单。
 
+`protocol_version` 与 Node 软件版本彼此独立，当前仅接受 `v1`。Master 必须先使用
+收到的原始正文完成 HMAC 验证，再解析 JSON；不支持的协议版本返回
+`426 NODE_PROTOCOL_UNSUPPORTED`。成功心跳使用 Master 接收时间更新上报名、hostname、
+软件版本和最后心跳，Node 的 `reported_at` 仅作诊断。
+
 响应：
 
 ```json
 {"accepted_at":"2026-07-29T14:00:01Z","next_heartbeat_seconds":60}
 ```
+
+每个节点的心跳至少间隔十秒，Node API 的进程内总限制为每节点每分钟二十次。正常
+心跳间隔为 60 秒。Master 将 `(node_id, nonce)` 存入 SQLite 并保留十分钟，进程重启
+不会清除有效窗口内的防重放记录。
+
+管理员通过 `GET /api/v1/nodes` 查看接入节点。接口要求管理员 Bearer Token，支持：
+
+| 参数 | 说明 |
+| --- | --- |
+| `page` / `page_size` | 服务端分页，`page_size` 最大 100 |
+| `search` | 搜索上报名、hostname、软件版本或 Node ID |
+| `management_status` | 按管理状态筛选 |
+| `connectivity_status` | `online`、`stale` 或 `offline` |
+| `sort_by` / `sort_order` | 按上报字段、批准时间或最后心跳升降序排列 |
+
+连接状态只使用 Master 接收时间推导：少于 120 秒为 `online`，120–300 秒（含边界）
+为 `stale`，超过 300 秒或从未收到心跳为 `offline`。管理界面映射为“在线”、
+“心跳延迟”和“离线”，并按浏览器时区显示最后心跳。
 
 ## 领取发布任务
 
@@ -287,6 +311,9 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
 | 401 | `NODE_TIMESTAMP_INVALID` | 时钟偏差超过 300 秒 |
 | 404 | `NODE_NOT_FOUND` | 节点未注册 |
 | 409 | `NODE_NONCE_REPLAYED` | nonce 重放 |
+| 422 | `NODE_AUTH_INVALID` | 认证头格式无效 |
+| 422 | `NODE_PAYLOAD_INVALID` | 心跳正文无效或节点身份不匹配 |
+| 426 | `NODE_PROTOCOL_UNSUPPORTED` | 正文协议版本不受支持 |
 | 409 | `TASK_LEASE_CONFLICT` | 任务已被领取 |
 | 422 | `TASK_PAYLOAD_INVALID` | 任务结构无效 |
 | 429 | `NODE_RATE_LIMITED` | 节点请求过快 |

@@ -42,6 +42,35 @@ export interface AccessNode {
   reported_name: string;
   hostname: string;
   software_version: string;
-  management_status: "active";
+  management_status: "active" | "disabled" | "rejected" | "pending";
   approved_at: string;
+}
+
+export type ConnectivityStatus = "online" | "stale" | "offline";
+
+export interface ListedAccessNode extends AccessNode {
+  connectivity_status: ConnectivityStatus;
+  last_heartbeat_at: string | null;
+}
+
+export interface AccessNodePage {
+  items: ListedAccessNode[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
+export interface NodeListParams {
+  page: number;
+  page_size: number;
+  search?: string;
+  management_status?: AccessNode["management_status"];
+  connectivity_status?: ConnectivityStatus;
+  sort_by:
+    | "reported_name"
+    | "hostname"
+    | "software_version"
+    | "approved_at"
+    | "last_heartbeat_at";
+  sort_order: "asc" | "desc";
 }
