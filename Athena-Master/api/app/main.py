@@ -9,6 +9,12 @@ from starlette.exceptions import HTTPException
 
 from app.api.v1.administrators import router as administrators_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.registration_applications import (
+    admin_router as registration_admin_router,
+)
+from app.api.v1.registration_applications import (
+    node_router as registration_node_router,
+)
 from app.core.config import Settings, get_settings
 from app.core.database import Base, create_engine, create_session_factory
 from app.core.errors import (
@@ -65,6 +71,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(administrators_router, prefix="/api/v1")
+    app.include_router(registration_admin_router, prefix="/api/v1")
+    app.include_router(registration_node_router, prefix="/api/node/v1")
 
     @app.get("/api/v1/health")
     async def health() -> dict[str, str]:

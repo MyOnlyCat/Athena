@@ -108,6 +108,15 @@ export interface MasterSettingResponse {
   port: number;
   has_token: boolean;
   runtime_status: MasterRuntimeStatus;
+  registration_status: "not_submitted" | "pending" | "approved";
+}
+
+export interface RegistrationApplicationResponse {
+  status: "pending";
+}
+
+export interface RegistrationStatusResponse {
+  status: "pending" | "approved";
 }
 
 export interface MasterConnectionTestResponse {

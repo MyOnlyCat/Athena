@@ -143,6 +143,26 @@ function Prepare-ApiDependencies {
     return [string]$venvPython
 }
 
+function Upgrade-ApiDatabase {
+    param([Parameter(Mandatory = $true)][string]$PythonPath)
+    $databaseUrl = [Environment]::GetEnvironmentVariable(
+        "ATHENA_DATABASE_URL",
+        "Process"
+    )
+    if ([string]::IsNullOrWhiteSpace($databaseUrl)) {
+        $databaseUrl = "sqlite+aiosqlite:///./data/athena-node.db"
+    }
+
+    Write-Step "Upgrading the API database..."
+    Invoke-InDirectory -Path $apiRoot -Action {
+        & $PythonPath -m app.core.database_upgrade --database-url $databaseUrl |
+            Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "API database upgrade failed with exit code $LASTEXITCODE."
+        }
+    }
+}
+
 function Test-TcpPort {
     param(
         [Parameter(Mandatory = $true)][string]$HostName,
@@ -295,6 +315,7 @@ try {
             throw "Port 8000 is occupied by a service that is not the Athena API."
         }
         $venvPython = Prepare-ApiDependencies
+        Upgrade-ApiDatabase -PythonPath $venvPython
         Write-Step "Starting API in a new window..."
         Start-ApiService -PythonPath $venvPython
         Wait-ForService -Name "API" -Probe { Test-ApiReady }

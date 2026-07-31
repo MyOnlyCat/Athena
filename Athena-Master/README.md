@@ -1,8 +1,8 @@
 # Athena-Master
 
 Athena-Master 是 Athena 的中心管理节点。当前已提供 FastAPI 后端、React 管理界面、
-SQLite/Alembic 持久化、管理员认证与账号管理、健康检查和 Windows 本地开发入口。
-节点注册、心跳、资产汇总和审计仍由后续需求实现。
+SQLite/Alembic 持久化、管理员认证与账号管理、两阶段节点注册审批、健康检查和
+Windows 本地开发入口。心跳、资产汇总和审计仍由后续需求实现。
 
 ## 项目结构
 
@@ -74,6 +74,17 @@ Athena-Master\ui\start-dev.cmd
 或重置密码会增加该账号的持久化认证版本，立即撤销此前签发的全部 JWT；重新启用账号
 不会恢复旧登录凭证。
 
+## 接入节点注册
+
+Node 使用本地持久化 UUIDv7 身份和 Token 对注册申请的原始 JSON 字节签名，正文不
+传输 Token。Master 的“注册申请”页面将资料明确标为“身份未验证”。管理员必须从
+可信渠道取得同一 Token 并在审批对话框中输入；Master 使用收到时保存的原始字节
+重新验证签名，验证成功后才创建已启用接入节点。
+
+Master 使用 `ATHENA_MASTER_CREDENTIAL_KEY` 对 Node Token 加密落库。API、页面和
+错误响应不会返回 Token 明文或密文。注册协议和接口详见
+[Master 与接入节点协议](../docs/api/master-node-protocol.md)。
+
 ## 运行边界
 
 第一阶段仅支持单进程、单 worker、单实例和本地 SQLite。SQLite 启用 WAL、外键和
@@ -88,5 +99,5 @@ cd Athena-Master\api
 .\.venv\Scripts\python.exe -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8001 --workers 1
 ```
 
-主从通信接口见[主从节点协议](../docs/api/master-node-protocol.md)，后续工作见
+节点通信接口见[Master 与接入节点协议](../docs/api/master-node-protocol.md)，后续工作见
 [任务清单](../TASKS.md)。

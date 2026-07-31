@@ -15,6 +15,7 @@ MasterRuntimeStatus = Literal[
     "error",
     "stopped",
 ]
+RegistrationStatus = Literal["not_submitted", "pending", "approved"]
 
 
 class MasterSettingInput(BaseModel):
@@ -52,7 +53,16 @@ class MasterSettingResponse(BaseModel):
     port: int
     has_token: bool
     runtime_status: MasterRuntimeStatus
+    registration_status: RegistrationStatus
 
 
 class MasterConnectionTestResponse(BaseModel):
     status: Literal["success"] = "success"
+
+
+class RegistrationApplicationResponse(BaseModel):
+    status: Literal["pending"]
+
+
+class RegistrationStatusResponse(BaseModel):
+    status: Literal["pending", "approved"]

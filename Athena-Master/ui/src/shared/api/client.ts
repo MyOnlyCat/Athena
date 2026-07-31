@@ -1,6 +1,12 @@
 import axios, { AxiosError } from "axios";
 
-import type { ApiErrorBody, User, UserPage } from "./types";
+import type {
+  AccessNode,
+  ApiErrorBody,
+  RegistrationApplicationPage,
+  User,
+  UserPage
+} from "./types";
 
 export const api = axios.create({ baseURL: "/api/v1", timeout: 20_000 });
 
@@ -59,5 +65,22 @@ export const administratorsApi = {
   },
   async resetPassword(id: string, password: string) {
     await api.post(`/administrators/${id}/reset-password`, { password });
+  }
+};
+
+export const registrationApplicationsApi = {
+  async list(page: number, pageSize: number) {
+    return (
+      await api.get<RegistrationApplicationPage>("/registration-applications", {
+        params: { page, page_size: pageSize }
+      })
+    ).data;
+  },
+  async approve(id: string, token: string) {
+    return (
+      await api.post<AccessNode>(`/registration-applications/${id}/approve`, {
+        token
+      })
+    ).data;
   }
 };

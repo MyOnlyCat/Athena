@@ -63,22 +63,22 @@ class MasterClient:
         self,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return await self.heartbeat(
-            payload
-            or {
-                "node": {
-                    "id": self.node_id,
-                    "name": self.node_id,
-                    "version": "unknown",
-                    "hostname": self.node_id,
-                    "reported_at": "connection-test",
-                },
-                "hosts": [],
-            }
-        )
+        del payload
+        response = await self.http.get("/api/v1/health")
+        response.raise_for_status()
+        result = dict(response.json())
+        if result.get("status") != "ok" or result.get("service") != "athena-master-api":
+            raise ValueError("unexpected master health response")
+        return result
 
     async def heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._post("/api/node/v1/nodes/heartbeat", payload)
+
+    async def submit_registration(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._post("/api/node/v1/registration-applications", payload)
+
+    async def get_registration_status(self) -> dict[str, Any]:
+        return await self._post("/api/node/v1/registration-applications/status", {})
 
     async def claim_tasks(self, running_tasks: int, limit: int = 4) -> list[dict[str, Any]]:
         result = await self._post(
