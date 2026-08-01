@@ -1,10 +1,11 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.time import as_utc
+from app.schemas.asset import HeartbeatHost
 
 ConnectivityStatus = Literal["online", "stale", "offline"]
 ManagementStatus = Literal["active", "disabled", "rejected", "pending"]
@@ -41,7 +42,14 @@ class HeartbeatPayload(BaseModel):
 
     protocol_version: str = Field(min_length=1, max_length=16)
     node: HeartbeatNode
-    hosts: list[dict[str, Any]]
+    hosts: list[HeartbeatHost] = Field(max_length=500)
+
+    @model_validator(mode="after")
+    def reject_duplicate_host_ids(self) -> "HeartbeatPayload":
+        host_ids = [host.id for host in self.hosts]
+        if len(set(host_ids)) != len(host_ids):
+            raise ValueError("host ids must be unique within a snapshot")
+        return self
 
 
 class HeartbeatAccepted(BaseModel):

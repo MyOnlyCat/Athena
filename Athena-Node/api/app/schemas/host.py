@@ -1,6 +1,16 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+
+HostTestCode = Literal[
+    "SSH_CONNECTED",
+    "SSH_AUTH_FAILED",
+    "SSH_TIMEOUT",
+    "SSH_CONNECTION_FAILED",
+    "SSH_HOST_KEY_UNTRUSTED",
+    "SSH_HOST_KEY_CHANGED",
+]
 
 
 class HostBase(BaseModel):
@@ -34,6 +44,7 @@ class HostResponse(HostBase):
     id: str
     host_key_fingerprint: str | None
     last_test_status: str | None
+    last_test_code: HostTestCode | None
     last_test_message: str | None
     last_tested_at: datetime | None
     created_at: datetime
@@ -51,7 +62,7 @@ class FingerprintTrust(BaseModel):
 
 class SSHTestResponse(BaseModel):
     status: str
-    code: str
+    code: HostTestCode
     message: str
     fingerprint: str | None = None
 

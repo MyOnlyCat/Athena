@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from app.core.database import Base
-from app.models import registration, user  # noqa: F401
+from app.models import asset, registration, user  # noqa: F401
 
 config = context.config
 database_url = os.getenv("ATHENA_MASTER_DATABASE_URL")

@@ -1,3 +1,11 @@
+export type HostTestCode =
+  | "SSH_CONNECTED"
+  | "SSH_AUTH_FAILED"
+  | "SSH_TIMEOUT"
+  | "SSH_CONNECTION_FAILED"
+  | "SSH_HOST_KEY_UNTRUSTED"
+  | "SSH_HOST_KEY_CHANGED";
+
 export interface User {
   id: string;
   username: string;
@@ -17,6 +25,7 @@ export interface Host {
   has_password: boolean;
   host_key_fingerprint: string | null;
   last_test_status: string | null;
+  last_test_code: HostTestCode | null;
   last_test_message: string | null;
   last_tested_at: string | null;
   created_at: string;

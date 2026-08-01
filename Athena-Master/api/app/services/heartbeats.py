@@ -11,6 +11,7 @@ from app.core.time import as_utc
 from app.models.registration import AccessNode, NodeNonce
 from app.schemas.heartbeat import HeartbeatPayload
 from app.schemas.registration import NONCE_PATTERN, SIGNATURE_PATTERN
+from app.services.assets import AssetSnapshotService
 from app.services.crypto import CredentialCipher
 from app.services.signing import verify_request_signature
 
@@ -19,6 +20,7 @@ NONCE_RETENTION_MINUTES = 10
 MIN_HEARTBEAT_INTERVAL_SECONDS = 10
 NODE_REQUEST_LIMIT_PER_MINUTE = 20
 SUPPORTED_PROTOCOL_VERSION = "v1"
+MAX_HEARTBEAT_BODY_BYTES = 5 * 1024 * 1024
 
 
 class NodeRequestThrottle:
@@ -138,6 +140,11 @@ class HeartbeatService:
                 status_code=426,
             )
 
+        await AssetSnapshotService(self.session).replace(
+            node_id=node_id,
+            hosts=payload.hosts,
+            received_at=received_at,
+        )
         node.reported_name = payload.node.name
         node.hostname = payload.node.hostname
         node.software_version = payload.node.version

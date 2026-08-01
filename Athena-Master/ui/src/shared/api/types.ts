@@ -74,3 +74,46 @@ export interface NodeListParams {
     | "last_heartbeat_at";
   sort_order: "asc" | "desc";
 }
+
+export type HostTestStatus = "success" | "failed" | "pending_trust";
+export type HostDetectionFilter = HostTestStatus | "untested";
+export type HostTestCode =
+  | "SSH_CONNECTED"
+  | "SSH_AUTH_FAILED"
+  | "SSH_TIMEOUT"
+  | "SSH_CONNECTION_FAILED"
+  | "SSH_HOST_KEY_UNTRUSTED"
+  | "SSH_HOST_KEY_CHANGED";
+export type AssetLifecycleStatus = "active" | "retired";
+
+export interface HostAsset {
+  node_id: string;
+  host_id: string;
+  name: string;
+  address: string;
+  port: number;
+  username: string;
+  tags: string[];
+  is_local: boolean;
+  last_test_status: HostTestStatus | null;
+  last_test_code: HostTestCode | null;
+  last_tested_at: string | null;
+  lifecycle_status: AssetLifecycleStatus;
+  retired_at: string | null;
+}
+
+export interface HostAssetPage {
+  items: HostAsset[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
+export interface HostAssetListParams {
+  page: number;
+  page_size: number;
+  search?: string;
+  lifecycle_status?: AssetLifecycleStatus;
+  detection_status?: HostDetectionFilter;
+  tag?: string;
+}

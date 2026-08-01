@@ -19,6 +19,7 @@ const host: Host = {
   has_password: true,
   host_key_fingerprint: null,
   last_test_status: null,
+  last_test_code: null,
   last_test_message: null,
   last_tested_at: null,
   created_at: "2026-07-30T00:00:00Z"

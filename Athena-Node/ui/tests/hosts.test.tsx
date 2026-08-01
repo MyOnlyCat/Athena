@@ -17,6 +17,7 @@ test("renders current node, address, and connection status", () => {
           has_password: true,
           host_key_fingerprint: "SHA256:trusted",
           last_test_status: "success",
+          last_test_code: "SSH_CONNECTED",
           last_test_message: "SSH 连接成功",
           last_tested_at: null,
           created_at: "2026-07-29T00:00:00Z"

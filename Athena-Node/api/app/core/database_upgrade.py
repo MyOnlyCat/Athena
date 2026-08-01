@@ -57,16 +57,17 @@ def _matches_legacy_0007(database_url: str) -> bool:
             )
     finally:
         engine.dispose()
-    if len(differences) != 1:
-        return False
-    difference = differences[0]
-    return (
-        isinstance(difference, tuple)
+    additions = {
+        (difference[2], difference[3].name)
+        for difference in differences
+        if isinstance(difference, tuple)
         and len(difference) == 4
         and difference[0] == "add_column"
-        and difference[2] == "master_settings"
-        and difference[3].name == "registration_status"
-    )
+    }
+    return len(additions) == len(differences) and additions == {
+        ("master_settings", "registration_status"),
+        ("hosts", "last_test_code"),
+    }
 
 
 def _backup_legacy_database(database: Path) -> Path:

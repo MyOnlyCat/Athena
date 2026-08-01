@@ -37,6 +37,19 @@ def test_unversioned_create_all_database_is_safely_baselined_and_upgraded(
         connection.exec_driver_sql(
             "ALTER TABLE master_settings DROP COLUMN registration_status"
         )
+        connection.exec_driver_sql("ALTER TABLE hosts DROP COLUMN last_test_code")
+        connection.exec_driver_sql(
+            "INSERT INTO hosts "
+            "(id,name,address,port,username,encrypted_password,tags,is_local,"
+            "last_test_status,last_test_message,last_tested_at,created_at,updated_at) "
+            "VALUES "
+            "('host-success','success-host','10.0.0.1',22,'root','encrypted','[]',0,"
+            "'success','SSH 连接成功','2026-07-31 08:00:00',"
+            "'2026-07-31 08:00:00','2026-07-31 08:00:00'),"
+            "('host-timeout','timeout-host','10.0.0.2',22,'root','encrypted','[]',0,"
+            "'failed','SSH 连接超时','2026-07-31 08:00:00',"
+            "'2026-07-31 08:00:00','2026-07-31 08:00:00')"
+        )
     engine.dispose()
 
     upgraded = run_upgrade(database)
@@ -44,15 +57,27 @@ def test_unversioned_create_all_database_is_safely_baselined_and_upgraded(
     assert upgraded.returncode == 0, upgraded.stderr
     assert Path(f"{database}.pre-alembic-0007_node_identity.bak").exists()
     with sqlite3.connect(database) as connection:
-        columns = {
+        master_columns = {
             row[1]
             for row in connection.execute('PRAGMA table_info("master_settings")')
+        }
+        host_columns = {
+            row[1]
+            for row in connection.execute('PRAGMA table_info("hosts")')
         }
         version = connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone()
-    assert "registration_status" in columns
-    assert version == ("0008_registration_status",)
+        test_results = connection.execute(
+            "SELECT name, last_test_code FROM hosts ORDER BY name"
+        ).fetchall()
+    assert "registration_status" in master_columns
+    assert "last_test_code" in host_columns
+    assert version == ("0009_host_test_code",)
+    assert test_results == [
+        ("success-host", "SSH_CONNECTED"),
+        ("timeout-host", "SSH_TIMEOUT"),
+    ]
 
 
 def test_unknown_unversioned_schema_is_rejected_without_stamping(

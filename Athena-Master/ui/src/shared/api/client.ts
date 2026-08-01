@@ -4,6 +4,8 @@ import type {
   AccessNode,
   AccessNodePage,
   ApiErrorBody,
+  HostAssetListParams,
+  HostAssetPage,
   NodeListParams,
   RegistrationApplicationPage,
   User,
@@ -105,5 +107,8 @@ export const registrationApplicationsApi = {
 export const nodesApi = {
   async list(params: NodeListParams) {
     return (await api.get<AccessNodePage>("/nodes", { params })).data;
+  },
+  async listAssets(nodeId: string, params: HostAssetListParams) {
+    return (await api.get<HostAssetPage>(`/nodes/${nodeId}/assets`, { params })).data;
   }
 };
