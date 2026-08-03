@@ -40,10 +40,21 @@ export interface RegistrationApplicationPage {
 export interface AccessNode {
   node_id: string;
   reported_name: string;
+  display_name: string | null;
+  effective_name: string;
   hostname: string;
   software_version: string;
   management_status: "active" | "disabled" | "rejected" | "pending";
+  notes: string | null;
+  management_tags: string[];
+  disable_reason: string | null;
   approved_at: string;
+}
+
+export interface NodeManagementInfoInput {
+  display_name: string | null;
+  notes: string | null;
+  management_tags: string[];
 }
 
 export type ConnectivityStatus = "online" | "stale" | "offline";

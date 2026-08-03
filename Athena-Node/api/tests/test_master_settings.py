@@ -995,6 +995,31 @@ async def test_runtime_reports_unconfigured_connecting_and_stopped(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "inventory_status",
+    ["disabled", "authentication_failed", "connection_failed"],
+)
+async def test_runtime_exposes_actionable_master_connection_status(
+    settings: Settings,
+    inventory_status: str,
+) -> None:
+    from app.services.master_settings import MasterConfig
+
+    tracker = RuntimeTracker()
+    runtime = runtime_with_fakes(settings, tracker)
+    try:
+        await runtime.apply(
+            MasterConfig("https", "master.example.com", 443, "secret")
+        )
+        assert runtime._active is not None
+        runtime._active.inventory.status = inventory_status
+
+        assert runtime.status == inventory_status
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_put_activates_committed_candidate_when_old_closers_fail(
     settings: Settings,
 ) -> None:

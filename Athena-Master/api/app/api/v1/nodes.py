@@ -17,10 +17,17 @@ from app.schemas.heartbeat import (
     ConnectivityStatus,
     HeartbeatAccepted,
 )
+from app.schemas.node import (
+    ManagedAccessNodeResponse,
+    ManagementStatus,
+    NodeManagementInfoUpdate,
+    NodeStatusUpdate,
+    NodeTokenRotation,
+)
 from app.services.assets import HostAssetQueryService
 from app.services.heartbeats import MAX_HEARTBEAT_BODY_BYTES, HeartbeatService
 from app.services.node_status import connectivity_status
-from app.services.nodes import AccessNodeQueryService
+from app.services.nodes import AccessNodeManagementService, AccessNodeQueryService
 
 node_router = APIRouter(tags=["node-heartbeats"])
 admin_router = APIRouter(prefix="/nodes", tags=["nodes"])
@@ -88,7 +95,7 @@ async def list_nodes(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     search: Annotated[str | None, Query(max_length=255)] = None,
     management_status: Annotated[
-        Literal["active", "disabled", "rejected", "pending"] | None,
+        ManagementStatus | None,
         Query(),
     ] = None,
     connectivity_status_filter: Annotated[
@@ -121,11 +128,7 @@ async def list_nodes(
     return AccessNodePage(
         items=[
             AccessNodeListItem(
-                node_id=node.node_id,
-                reported_name=node.reported_name,
-                hostname=node.hostname,
-                software_version=node.software_version,
-                management_status=node.management_status,
+                **ManagedAccessNodeResponse.model_validate(node).model_dump(),
                 connectivity_status=connectivity_status(
                     node.last_heartbeat_at,
                     now,
@@ -139,6 +142,66 @@ async def list_nodes(
         page_size=page_size,
         total=total,
     )
+
+
+@admin_router.patch(
+    "/{node_id}/management-info",
+    response_model=ManagedAccessNodeResponse,
+)
+async def update_node_management_info(
+    node_id: str,
+    data: NodeManagementInfoUpdate,
+    request: Request,
+    session: SessionDep,
+    _: CurrentUserDep,
+) -> ManagedAccessNodeResponse:
+    async with request.app.state.node_write_lock:
+        node = await AccessNodeManagementService(
+            session,
+            request.app.state.settings.credential_key,
+        ).update_info(
+            node_id,
+            display_name=data.display_name,
+            notes=data.notes,
+            management_tags=data.management_tags,
+        )
+    return ManagedAccessNodeResponse.model_validate(node)
+
+
+@admin_router.patch("/{node_id}/status", response_model=ManagedAccessNodeResponse)
+async def update_node_status(
+    node_id: str,
+    data: NodeStatusUpdate,
+    request: Request,
+    session: SessionDep,
+    _: CurrentUserDep,
+) -> ManagedAccessNodeResponse:
+    async with request.app.state.node_write_lock:
+        node = await AccessNodeManagementService(
+            session,
+            request.app.state.settings.credential_key,
+        ).set_status(
+            node_id,
+            management_status=data.management_status,
+            reason=data.reason,
+        )
+    return ManagedAccessNodeResponse.model_validate(node)
+
+
+@admin_router.post("/{node_id}/token", response_model=ManagedAccessNodeResponse)
+async def rotate_node_token(
+    node_id: str,
+    data: NodeTokenRotation,
+    request: Request,
+    session: SessionDep,
+    _: CurrentUserDep,
+) -> ManagedAccessNodeResponse:
+    async with request.app.state.node_write_lock:
+        node = await AccessNodeManagementService(
+            session,
+            request.app.state.settings.credential_key,
+        ).rotate_token(node_id, data.token)
+    return ManagedAccessNodeResponse.model_validate(node)
 
 
 @admin_router.get("/{node_id}/assets", response_model=HostAssetPage)

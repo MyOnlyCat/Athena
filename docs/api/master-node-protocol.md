@@ -142,7 +142,10 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
 配置。候选准备或数据库提交失败时不替换旧运行时，数据库提交失败时还会清理候选资源。
 `registration_status` 为 `not_submitted`、`pending`、`approved`、`rejected`、
 `expired` 或 `restored`，
-`runtime_status` 为 `unconfigured`、`connecting`、`online`、`error` 或 `stopped`。
+`runtime_status` 为 `unconfigured`、`connecting`、`online`、`disabled`、
+`authentication_failed`、`connection_failed`、`error` 或 `stopped`。正常心跳间隔为
+60 秒；禁用或认证失败固定每 300 秒探测；连接失败使用带抖动的指数退避并在 300 秒
+封顶，成功后恢复 60 秒间隔。
 
 ## 心跳与完整主机清单
 
@@ -222,6 +225,20 @@ Master 严格拒绝未知字段、重复 host ID、字符串形式端口、非�
 连接状态只使用 Master 接收时间推导：少于 120 秒为 `online`，120–300 秒（含边界）
 为 `stale`，超过 300 秒或从未收到心跳为 `offline`。管理界面映射为“在线”、
 “心跳延迟”和“离线”，并按浏览器时区显示最后心跳。
+
+管理员还可维护与心跳上报字段隔离的节点管理信息：
+
+| 方法 | 路径 | 行为 |
+| --- | --- | --- |
+| `PATCH` | `/api/v1/nodes/{node_id}/management-info` | 替换管理显示名、备注和标签 |
+| `PATCH` | `/api/v1/nodes/{node_id}/status` | `active` / `disabled`，原因可空 |
+| `POST` | `/api/v1/nodes/{node_id}/token` | 输入新 Token 手动轮换 |
+
+管理显示名为空时页面回退到 Node 上报名，但仍同时标注原始上报名。心跳不会覆盖管理
+字段。禁用节点的已认证业务请求返回 `403 NODE_DISABLED`，且不消费 nonce 或更新心跳、
+资产；身份和历史数据保留。重新启用后 Node 在下一次五分钟探测时自动恢复。Token
+轮换执行长度、全局唯一、加密存储和不回显约束；若新值与当前 Token 相同则返回
+`409 NODE_TOKEN_UNCHANGED`，提交成功后旧 Token 立即失效。
 
 管理员通过 `GET /api/v1/nodes/{node_id}/assets` 查看所选接入节点的只读主机资产。
 接口支持服务端分页，并提供以下筛选：
@@ -340,6 +357,7 @@ Master 严格拒绝未知字段、重复 host ID、字符串形式端口、非�
 | --- | --- | --- |
 | 401 | `NODE_SIGNATURE_INVALID` | 签名不匹配 |
 | 401 | `NODE_TIMESTAMP_INVALID` | 时钟偏差超过 300 秒 |
+| 403 | `NODE_DISABLED` | 节点已被管理员禁用 |
 | 404 | `NODE_NOT_FOUND` | 节点未注册 |
 | 409 | `NODE_NONCE_REPLAYED` | nonce 重放 |
 | 422 | `NODE_AUTH_INVALID` | 认证头格式无效 |

@@ -6,6 +6,7 @@ import type {
   ApiErrorBody,
   HostAssetListParams,
   HostAssetPage,
+  NodeManagementInfoInput,
   NodeListParams,
   RegistrationApplicationPage,
   User,
@@ -110,5 +111,23 @@ export const nodesApi = {
   },
   async listAssets(nodeId: string, params: HostAssetListParams) {
     return (await api.get<HostAssetPage>(`/nodes/${nodeId}/assets`, { params })).data;
+  },
+  async updateInfo(nodeId: string, input: NodeManagementInfoInput) {
+    return (await api.patch<AccessNode>(`/nodes/${nodeId}/management-info`, input)).data;
+  },
+  async updateStatus(
+    nodeId: string,
+    managementStatus: "active" | "disabled",
+    reason?: string
+  ) {
+    return (
+      await api.patch<AccessNode>(`/nodes/${nodeId}/status`, {
+        management_status: managementStatus,
+        reason: reason || null
+      })
+    ).data;
+  },
+  async rotateToken(nodeId: string, token: string) {
+    return (await api.post<AccessNode>(`/nodes/${nodeId}/token`, { token })).data;
   }
 };

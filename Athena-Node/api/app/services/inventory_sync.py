@@ -1,13 +1,35 @@
 import asyncio
 import platform
+import random
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 from sqlalchemy import select
 
+from app.core.errors import AppError
 from app.models.host import Host
 
-InventoryStatus = Literal["connecting", "online", "error"]
+InventoryStatus = Literal[
+    "connecting",
+    "online",
+    "pending",
+    "disabled",
+    "authentication_failed",
+    "connection_failed",
+    "error",
+]
+
+NORMAL_HEARTBEAT_SECONDS = 60
+MANAGEMENT_PROBE_SECONDS = 300
+CONNECTION_BACKOFF_BASE_SECONDS = 5
+CONNECTION_BACKOFF_MAX_SECONDS = 300
+AUTHENTICATION_ERROR_CODES = {
+    "NODE_SIGNATURE_INVALID",
+    "NODE_AUTH_INVALID",
+    "NODE_TIMESTAMP_INVALID",
+    "REGISTRATION_TOKEN_INVALID",
+}
 
 
 def _read(item: Any, name: str) -> Any:
@@ -65,13 +87,22 @@ def build_inventory(
 
 
 class InventorySynchronizer:
-    def __init__(self, settings: Any, session_factory: Any, master_client: Any = None) -> None:
+    def __init__(
+        self,
+        settings: Any,
+        session_factory: Any,
+        master_client: Any = None,
+        *,
+        jitter_source: Callable[[], float] = random.random,
+    ) -> None:
         self.settings = settings
         self.session_factory = session_factory
         self.master_client = master_client
+        self.jitter_source = jitter_source
         self.changed = asyncio.Event()
         self.last_success_at: datetime | None = None
         self.status: InventoryStatus = "connecting"
+        self._connection_failures = 0
 
     def notify_change(self) -> None:
         self.changed.set()
@@ -92,24 +123,56 @@ class InventorySynchronizer:
                 hosts=hosts,
             )
             await self.master_client.heartbeat(payload)
+        except AppError as exc:
+            if exc.code == "NODE_DISABLED":
+                self.status = "disabled"
+            elif exc.code in AUTHENTICATION_ERROR_CODES:
+                self.status = "authentication_failed"
+            elif exc.code in {"NODE_NOT_FOUND", "NODE_NOT_APPROVED"}:
+                self.status = "pending"
+            else:
+                self.status = "error"
+            raise
         except Exception:
-            self.status = "error"
+            self.status = "connection_failed"
             raise
         self.last_success_at = datetime.now(UTC)
         self.status = "online"
+
+    def _retry_delay(self) -> float | None:
+        if self.status in {"disabled", "authentication_failed"}:
+            self._connection_failures = 0
+            return MANAGEMENT_PROBE_SECONDS
+        if self.status == "connection_failed":
+            self._connection_failures += 1
+            exponent = min(self._connection_failures - 1, 6)
+            base_delay = min(
+                CONNECTION_BACKOFF_MAX_SECONDS,
+                CONNECTION_BACKOFF_BASE_SECONDS * 2**exponent,
+            )
+            jittered = base_delay * (0.5 + self.jitter_source())
+            return float(min(CONNECTION_BACKOFF_MAX_SECONDS, jittered))
+        self._connection_failures = 0
+        return NORMAL_HEARTBEAT_SECONDS
 
     async def run(self, stop: asyncio.Event, claim_callback: Any = None) -> None:
         while not stop.is_set():
             self.changed.clear()
             try:
                 await self.sync_now()
-                if claim_callback is not None:
-                    await claim_callback()
             except Exception:
-                self.status = "error"
+                pass
+            else:
+                if claim_callback is not None:
+                    try:
+                        await claim_callback()
+                    except Exception:
+                        # Task delivery is independent from heartbeat connectivity.
+                        pass
+            delay = self._retry_delay()
             if stop.is_set():
                 break
             try:
-                await asyncio.wait_for(self.changed.wait(), timeout=60)
+                await asyncio.wait_for(self.changed.wait(), timeout=delay)
             except TimeoutError:
                 pass

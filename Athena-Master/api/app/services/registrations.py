@@ -1,6 +1,4 @@
 import asyncio
-import hashlib
-import hmac
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -18,7 +16,7 @@ from app.schemas.registration import (
     RegistrationApplicationStatus,
     RegistrationPayload,
 )
-from app.services.crypto import CredentialCipher
+from app.services.crypto import CredentialCipher, node_token_fingerprint
 from app.services.signing import verify_request_signature
 
 REGISTRATION_PATH = "/api/node/v1/registration-applications"
@@ -116,11 +114,7 @@ class RegistrationService:
         self.throttle = throttle
 
     def _token_fingerprint(self, token: str) -> str:
-        return hmac.new(
-            self.credential_key.encode(),
-            token.encode(),
-            hashlib.sha256,
-        ).hexdigest()
+        return node_token_fingerprint(self.credential_key, token)
 
     async def maintain(self, now: datetime) -> None:
         expiry_cutoff = now - timedelta(days=APPLICATION_EXPIRY_DAYS)

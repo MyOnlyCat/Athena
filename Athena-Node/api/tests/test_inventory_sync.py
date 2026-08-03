@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from app.core.errors import AppError
 from app.services.inventory_sync import build_inventory
 
 
@@ -98,7 +99,12 @@ def synchronizer(client: HeartbeatClient):
         node_name="Shanghai child",
         node_version="0.1.0",
     )
-    return InventorySynchronizer(settings, empty_session_factory, client)
+    return InventorySynchronizer(
+        settings,
+        empty_session_factory,
+        client,
+        jitter_source=lambda: 0.5,
+    )
 
 
 @pytest.mark.asyncio
@@ -120,18 +126,18 @@ async def test_successful_heartbeat_and_poll_report_online() -> None:
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_connection_failure_reports_error() -> None:
+async def test_heartbeat_connection_failure_reports_connection_state() -> None:
     client = HeartbeatClient(OSError("master unreachable"))
     sync = synchronizer(client)
 
     with pytest.raises(OSError, match="master unreachable"):
         await sync.sync_now()
 
-    assert sync.status == "error"
+    assert sync.status == "connection_failed"
 
 
 @pytest.mark.asyncio
-async def test_poll_failure_after_heartbeat_reports_error() -> None:
+async def test_poll_failure_does_not_change_heartbeat_connection_state() -> None:
     client = HeartbeatClient()
     sync = synchronizer(client)
     stop = asyncio.Event()
@@ -144,7 +150,7 @@ async def test_poll_failure_after_heartbeat_reports_error() -> None:
     await sync.run(stop, failing_poll)
 
     assert client.calls == 1
-    assert sync.status == "error"
+    assert sync.status == "online"
 
 
 @pytest.mark.asyncio
@@ -181,7 +187,7 @@ async def test_failed_changed_inventory_waits_before_retrying(
     event_states_at_wait: list[bool] = []
 
     async def stop_after_wait(awaitable: Any, **options: float) -> None:
-        assert options["timeout"] == 60
+        assert options["timeout"] == 5
         event_states_at_wait.append(sync.changed.is_set())
         awaitable.close()
         stop.set()
@@ -193,3 +199,115 @@ async def test_failed_changed_inventory_waits_before_retrying(
 
     assert event_states_at_wait == [False]
     assert client.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    [
+        (AppError("NODE_DISABLED", "接入节点已被禁用", status_code=403), "disabled"),
+        (
+            AppError("NODE_SIGNATURE_INVALID", "节点签名无效", status_code=401),
+            "authentication_failed",
+        ),
+    ],
+)
+async def test_management_and_authentication_failures_probe_every_five_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+    error: AppError,
+    expected_status: str,
+) -> None:
+    client = HeartbeatClient(error)
+    sync = synchronizer(client)
+    stop = asyncio.Event()
+    observed_timeouts: list[float] = []
+
+    async def stop_after_wait(awaitable: Any, **options: float) -> None:
+        observed_timeouts.append(options["timeout"])
+        awaitable.close()
+        stop.set()
+        raise TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", stop_after_wait)
+
+    await sync.run(stop)
+
+    assert observed_timeouts == [300]
+    assert sync.status == expected_status
+
+
+@pytest.mark.asyncio
+async def test_pending_approval_retries_after_normal_heartbeat_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = HeartbeatClient(
+        AppError("NODE_NOT_FOUND", "接入节点不存在", status_code=404)
+    )
+    sync = synchronizer(client)
+    stop = asyncio.Event()
+    observed_timeouts: list[float] = []
+
+    async def stop_after_wait(awaitable: Any, **options: float) -> None:
+        observed_timeouts.append(options["timeout"])
+        awaitable.close()
+        stop.set()
+        raise TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", stop_after_wait)
+
+    await sync.run(stop)
+
+    assert observed_timeouts == [60]
+    assert sync.status == "pending"
+
+
+class SequencedHeartbeatClient(HeartbeatClient):
+    def __init__(self, outcomes: list[Exception | None]) -> None:
+        super().__init__()
+        self.outcomes = outcomes
+
+    async def heartbeat(self, payload: dict[str, Any]) -> None:
+        assert payload["node"]["id"] == "node-1"
+        outcome = self.outcomes[self.calls]
+        self.calls += 1
+        if outcome is not None:
+            raise outcome
+
+
+@pytest.mark.asyncio
+async def test_master_connection_backoff_is_jittered_capped_and_resets_after_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.inventory_sync import InventorySynchronizer
+
+    failures = [OSError("master unreachable") for _ in range(7)]
+    client = SequencedHeartbeatClient([*failures, None])
+    settings = SimpleNamespace(
+        node_id="node-1",
+        node_name="Shanghai child",
+        node_version="0.1.0",
+    )
+    sync = InventorySynchronizer(
+        settings,
+        empty_session_factory,
+        client,
+        jitter_source=lambda: 0.5,
+    )
+    stop = asyncio.Event()
+    observed_timeouts: list[float] = []
+
+    async def observe_wait(awaitable: Any, **options: float) -> None:
+        observed_timeouts.append(options["timeout"])
+        awaitable.close()
+        if len(observed_timeouts) == 8:
+            stop.set()
+        raise TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", observe_wait)
+
+    await sync.run(stop)
+
+    assert observed_timeouts == [5, 10, 20, 40, 80, 160, 300, 60]
+    assert max(observed_timeouts) == 300
+    assert sync.status == "online"
+    assert sync.last_success_at is not None

@@ -40,6 +40,9 @@ const runtimeStatuses: Array<[MasterRuntimeStatus, string]> = [
   ["connecting", "连接中"],
   ["online", "在线"],
   ["error", "异常"],
+  ["disabled", "已禁用"],
+  ["authentication_failed", "认证失败"],
+  ["connection_failed", "连接失败"],
   ["stopped", "已停止"]
 ];
 

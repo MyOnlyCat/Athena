@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, LargeBinary, String
+from sqlalchemy import JSON, DateTime, ForeignKey, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -51,6 +51,10 @@ class AccessNode(Base):
         default="active",
         nullable=False,
     )
+    display_name: Mapped[str | None] = mapped_column(String(100))
+    notes: Mapped[str | None] = mapped_column(String(1000))
+    management_tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    disable_reason: Mapped[str | None] = mapped_column(String(1000))
     encrypted_token: Mapped[str] = mapped_column(String(512), nullable=False)
     token_fingerprint: Mapped[str | None] = mapped_column(
         String(64),
@@ -63,6 +67,10 @@ class AccessNode(Base):
         nullable=False,
     )
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def effective_name(self) -> str:
+        return self.display_name or self.reported_name
 
 
 class NodeNonce(Base):

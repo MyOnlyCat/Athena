@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.time import as_utc
+from app.schemas.node import ManagementStatus
 
 RegistrationApplicationStatus = Literal[
     "pending",
@@ -90,7 +91,7 @@ class AccessNodeResponse(BaseModel):
     reported_name: str
     hostname: str
     software_version: str
-    management_status: str
+    management_status: ManagementStatus
     approved_at: datetime
 
     @field_validator("approved_at")

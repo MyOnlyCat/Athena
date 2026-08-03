@@ -34,6 +34,9 @@ const runtimeStatusLabels: Record<MasterRuntimeStatus, string> = {
   unconfigured: "未配置",
   connecting: "连接中",
   online: "在线",
+  disabled: "已禁用",
+  authentication_failed: "认证失败",
+  connection_failed: "连接失败",
   error: "异常",
   stopped: "已停止"
 };

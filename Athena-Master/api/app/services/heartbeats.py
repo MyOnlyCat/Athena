@@ -94,6 +94,19 @@ class HeartbeatService:
                 status_code=401,
             )
 
+        if node.management_status == "disabled":
+            raise AppError(
+                "NODE_DISABLED",
+                "接入节点已被禁用",
+                status_code=403,
+            )
+        if node.management_status != "active":
+            raise AppError(
+                "NODE_NOT_ACTIVE",
+                "接入节点当前不可用",
+                status_code=403,
+            )
+
         cutoff = received_at - timedelta(minutes=NONCE_RETENTION_MINUTES)
         await self.session.execute(delete(NodeNonce).where(NodeNonce.received_at <= cutoff))
         if await self.session.get(NodeNonce, (node_id, nonce)) is not None:

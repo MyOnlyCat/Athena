@@ -99,6 +99,9 @@ export type MasterRuntimeStatus =
   | "unconfigured"
   | "connecting"
   | "online"
+  | "disabled"
+  | "authentication_failed"
+  | "connection_failed"
   | "error"
   | "stopped";
 
