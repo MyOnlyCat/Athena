@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.models.user import User
 from app.schemas.user import UserCreate
+from app.services.audit import AuditedAction, commit_with_audit
 
 
 def validate_admin_password(username: str, password: str) -> None:
@@ -64,11 +65,19 @@ class UserService:
         )
         return users, total
 
-    async def create(self, data: UserCreate) -> User:
+    async def create(
+        self,
+        data: UserCreate,
+        audit: AuditedAction | None = None,
+    ) -> User:
         async with self.write_lock:
-            return await self._create(data)
+            return await self._create(data, audit)
 
-    async def _create(self, data: UserCreate) -> User:
+    async def _create(
+        self,
+        data: UserCreate,
+        audit: AuditedAction | None = None,
+    ) -> User:
         if await self.get_by_normalized_username(data.username):
             raise AppError("USERNAME_EXISTS", "用户名已存在", status_code=409)
         validate_admin_password(data.username, data.password)
@@ -78,16 +87,32 @@ class UserService:
             password_hash=self.password_hash.hash(data.password),
         )
         self.session.add(user)
-        await self.session.commit()
+        if audit is not None:
+            audit.set_target(user.normalized_username, user.username)
+        await commit_with_audit(self.session, audit)
         await self.session.refresh(user)
         return user
 
-    async def set_active(self, user_id: str, is_active: bool, actor_id: str) -> User:
+    async def set_active(
+        self,
+        user_id: str,
+        is_active: bool,
+        actor_id: str,
+        audit: AuditedAction | None = None,
+    ) -> User:
         async with self.write_lock:
-            return await self._set_active(user_id, is_active, actor_id)
+            return await self._set_active(user_id, is_active, actor_id, audit)
 
-    async def _set_active(self, user_id: str, is_active: bool, actor_id: str) -> User:
+    async def _set_active(
+        self,
+        user_id: str,
+        is_active: bool,
+        actor_id: str,
+        audit: AuditedAction | None = None,
+    ) -> User:
         user = await self.get(user_id)
+        if audit is not None:
+            audit.set_target(user.id, user.username)
         if not is_active and user.id == actor_id:
             raise AppError(
                 "CANNOT_DISABLE_SELF",
@@ -109,20 +134,32 @@ class UserService:
                 )
             user.auth_version += 1
         user.is_active = is_active
-        await self.session.commit()
+        await commit_with_audit(self.session, audit)
         await self.session.refresh(user)
         return user
 
-    async def reset_password(self, user_id: str, password: str) -> None:
+    async def reset_password(
+        self,
+        user_id: str,
+        password: str,
+        audit: AuditedAction | None = None,
+    ) -> None:
         async with self.write_lock:
-            await self._reset_password(user_id, password)
+            await self._reset_password(user_id, password, audit)
 
-    async def _reset_password(self, user_id: str, password: str) -> None:
+    async def _reset_password(
+        self,
+        user_id: str,
+        password: str,
+        audit: AuditedAction | None = None,
+    ) -> None:
         user = await self.get(user_id)
+        if audit is not None:
+            audit.set_target(user.id, user.username)
         validate_admin_password(user.username, password)
         user.password_hash = self.password_hash.hash(password)
         user.auth_version += 1
-        await self.session.commit()
+        await commit_with_audit(self.session, audit)
 
     async def create_bootstrap_admin(self, username: str, password: str) -> User:
         username = username.strip()

@@ -16,6 +16,7 @@ from app.schemas.registration import (
     RegistrationApplicationStatus,
     RegistrationPayload,
 )
+from app.services.audit import AuditedAction, commit_with_audit
 from app.services.crypto import CredentialCipher, node_token_fingerprint
 from app.services.signing import verify_request_signature
 
@@ -349,11 +350,18 @@ class RegistrationService:
             )
         return "approved"
 
-    async def approve(self, application_id: str, token: str) -> AccessNode:
+    async def approve(
+        self,
+        application_id: str,
+        token: str,
+        audit: AuditedAction | None = None,
+    ) -> AccessNode:
         await self.maintain(datetime.now(UTC))
         application = await self.session.get(RegistrationApplication, application_id)
         if application is None:
             raise AppError("REGISTRATION_NOT_FOUND", "注册申请不存在", status_code=404)
+        if audit is not None:
+            audit.set_target(application.id, application.reported_name)
         if application.status == "expired":
             raise AppError(
                 "REGISTRATION_EXPIRED",
@@ -418,7 +426,7 @@ class RegistrationService:
         application.status_changed_at = datetime.now(UTC)
         self.session.add(node)
         try:
-            await self.session.commit()
+            await commit_with_audit(self.session, audit)
         except IntegrityError:
             await self.session.rollback()
             token_owner = await self.session.scalar(
@@ -440,11 +448,14 @@ class RegistrationService:
         self,
         application_id: str,
         reason: str | None,
+        audit: AuditedAction | None = None,
     ) -> RegistrationApplication:
         await self.maintain(datetime.now(UTC))
         application = await self.session.get(RegistrationApplication, application_id)
         if application is None:
             raise AppError("REGISTRATION_NOT_FOUND", "注册申请不存在", status_code=404)
+        if audit is not None:
+            audit.set_target(application.id, application.reported_name)
         if application.status != "pending":
             raise AppError(
                 "REGISTRATION_NOT_PENDING",
@@ -454,15 +465,21 @@ class RegistrationService:
         application.status = "rejected"
         application.rejection_reason = reason.strip() if reason and reason.strip() else None
         application.status_changed_at = datetime.now(UTC)
-        await self.session.commit()
+        await commit_with_audit(self.session, audit)
         await self.session.refresh(application)
         return application
 
-    async def restore(self, application_id: str) -> RegistrationApplication:
+    async def restore(
+        self,
+        application_id: str,
+        audit: AuditedAction | None = None,
+    ) -> RegistrationApplication:
         await self.maintain(datetime.now(UTC))
         application = await self.session.get(RegistrationApplication, application_id)
         if application is None:
             raise AppError("REGISTRATION_NOT_FOUND", "注册申请不存在", status_code=404)
+        if audit is not None:
+            audit.set_target(application.id, application.reported_name)
         if application.status != "rejected":
             raise AppError(
                 "REGISTRATION_NOT_REJECTED",
@@ -472,7 +489,7 @@ class RegistrationService:
         application.status = "restored"
         application.rejection_reason = None
         application.status_changed_at = datetime.now(UTC)
-        await self.session.commit()
+        await commit_with_audit(self.session, audit)
         await self.session.refresh(application)
         return application
 

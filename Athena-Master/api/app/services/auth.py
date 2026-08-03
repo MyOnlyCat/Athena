@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.models.user import RevokedToken, User
+from app.services.audit import AuditedAction, commit_with_audit
 from app.services.users import UserService
+
+PASSWORD_HASH = PasswordHash.recommended()
+DUMMY_PASSWORD_HASH = PASSWORD_HASH.hash("athena-dummy-password-for-timing-only")
 
 
 class LoginThrottle:
@@ -54,17 +58,27 @@ class AuthService:
     ) -> None:
         self.session = session
         self.settings = settings
-        self.password_hash = PasswordHash.recommended()
+        self.password_hash = PASSWORD_HASH
         self.users = UserService(session, self.password_hash, administrator_write_lock)
 
-    async def authenticate(self, username: str, password: str) -> User:
+    async def authenticate(
+        self,
+        username: str,
+        password: str,
+        audit: AuditedAction | None = None,
+    ) -> User:
         user = await self.users.get_by_normalized_username(username)
-        if user is None or not self.password_hash.verify(password, user.password_hash):
+        candidate_hash = user.password_hash if user is not None else DUMMY_PASSWORD_HASH
+        password_valid = self.password_hash.verify(password, candidate_hash)
+        if user is None or not password_valid:
             raise AppError("INVALID_CREDENTIALS", "用户名或密码错误", status_code=401)
         if not user.is_active:
             raise AppError("USER_DISABLED", "用户已被禁用", status_code=403)
         user.last_login_at = datetime.now(UTC)
-        await self.session.commit()
+        if audit is not None:
+            audit.set_actor(user.id, user.username)
+            audit.set_target(user.normalized_username, user.username)
+        await commit_with_audit(self.session, audit)
         await self.session.refresh(user)
         return user
 

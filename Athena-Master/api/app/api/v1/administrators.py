@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Response, status
 
-from app.api.deps import AuthServiceDep, CurrentUserDep
+from app.api.deps import AuthenticatedAuditDep, AuthServiceDep, CurrentUserDep
 from app.models.user import User
 from app.schemas.user import (
     PasswordReset,
@@ -11,6 +11,7 @@ from app.schemas.user import (
     UserResponse,
     UserStatusUpdate,
 )
+from app.services.audit import AuditAction, AuditTargetType
 
 router = APIRouter(prefix="/administrators", tags=["administrators"])
 
@@ -35,9 +36,16 @@ async def list_administrators(
 async def create_administrator(
     data: UserCreate,
     auth: AuthServiceDep,
-    _: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> User:
-    return await auth.users.create(data)
+    async with audit.capture(
+        action=AuditAction.ADMINISTRATOR_CREATE,
+        target_type=AuditTargetType.ADMINISTRATOR,
+        target_id=data.username.casefold(),
+        target_label=data.username,
+    ) as tracked:
+        created = await auth.users.create(data, tracked)
+    return created
 
 
 @router.patch("/{administrator_id}/status", response_model=UserResponse)
@@ -45,9 +53,25 @@ async def set_administrator_status(
     administrator_id: str,
     data: UserStatusUpdate,
     auth: AuthServiceDep,
-    actor: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> User:
-    return await auth.users.set_active(administrator_id, data.is_active, actor.id)
+    async with audit.capture(
+        action=(
+            AuditAction.ADMINISTRATOR_ENABLE
+            if data.is_active
+            else AuditAction.ADMINISTRATOR_DISABLE
+        ),
+        target_type=AuditTargetType.ADMINISTRATOR,
+        target_id=administrator_id,
+        target_label=None,
+    ) as tracked:
+        updated = await auth.users.set_active(
+            administrator_id,
+            data.is_active,
+            audit.actor_id,
+            tracked,
+        )
+    return updated
 
 
 @router.post(
@@ -58,7 +82,13 @@ async def reset_administrator_password(
     administrator_id: str,
     data: PasswordReset,
     auth: AuthServiceDep,
-    _: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> Response:
-    await auth.users.reset_password(administrator_id, data.password)
+    async with audit.capture(
+        action=AuditAction.ADMINISTRATOR_PASSWORD_RESET,
+        target_type=AuditTargetType.ADMINISTRATOR,
+        target_id=administrator_id,
+        target_label=None,
+    ) as tracked:
+        await auth.users.reset_password(administrator_id, data.password, tracked)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -2,10 +2,10 @@ import { Spin } from "antd";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AdministratorsPage } from "../features/administrators/AdministratorsPage";
+import { AuditPage } from "../features/audit/AuditPage";
 import { useAuth } from "../features/auth/AuthContext";
 import { LoginPage } from "../features/auth/LoginPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
-import { FoundationPage } from "../features/foundation/FoundationPage";
 import { NodesPage } from "../features/nodes/NodesPage";
 import { RegistrationApplicationsPage } from "../features/registrations/RegistrationApplicationsPage";
 import { AppShell } from "./AppShell";
@@ -21,16 +21,7 @@ export function AppRouter() {
         <Route path="applications" element={<RegistrationApplicationsPage />} />
         <Route path="nodes" element={<NodesPage />} />
         <Route path="administrators" element={<AdministratorsPage />} />
-        <Route
-          path="audit"
-          element={
-            <FoundationPage
-              eyebrow="AUDIT"
-              title="审计日志"
-              description="操作审计将在后续需求中提供。"
-            />
-          }
-        />
+        <Route path="audit" element={<AuditPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

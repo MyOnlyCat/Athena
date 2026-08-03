@@ -13,6 +13,46 @@ export interface UserPage {
   total: number;
 }
 
+export type AuditAction =
+  | "auth.login"
+  | "administrator.create"
+  | "administrator.enable"
+  | "administrator.disable"
+  | "administrator.password_reset"
+  | "registration.approve"
+  | "registration.reject"
+  | "registration.restore"
+  | "node.management_info.update"
+  | "node.enable"
+  | "node.disable"
+  | "node.token.rotate";
+
+export type AuditTargetType =
+  | "administrator"
+  | "registration_application"
+  | "access_node";
+
+export interface AuditLog {
+  id: string;
+  actor_id: string | null;
+  actor_username: string | null;
+  action: AuditAction;
+  target_type: AuditTargetType;
+  target_id: string | null;
+  target_label: string | null;
+  result: "success" | "failure";
+  source_ip: string | null;
+  error_code: string | null;
+  created_at: string;
+}
+
+export interface AuditLogPage {
+  items: AuditLog[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
 export interface ApiErrorBody {
   code: string;
   message: string;

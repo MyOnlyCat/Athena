@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, Query, Request
 
-from app.api.deps import CurrentUserDep, SessionDep
+from app.api.deps import AuthenticatedAuditDep, CurrentUserDep, SessionDep
 from app.core.errors import AppError
 from app.schemas.asset import (
     AssetLifecycleStatus,
@@ -25,6 +25,7 @@ from app.schemas.node import (
     NodeTokenRotation,
 )
 from app.services.assets import HostAssetQueryService
+from app.services.audit import AuditAction, AuditTargetType
 from app.services.heartbeats import MAX_HEARTBEAT_BODY_BYTES, HeartbeatService
 from app.services.node_status import connectivity_status
 from app.services.nodes import AccessNodeManagementService, AccessNodeQueryService
@@ -153,18 +154,25 @@ async def update_node_management_info(
     data: NodeManagementInfoUpdate,
     request: Request,
     session: SessionDep,
-    _: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> ManagedAccessNodeResponse:
-    async with request.app.state.node_write_lock:
-        node = await AccessNodeManagementService(
-            session,
-            request.app.state.settings.credential_key,
-        ).update_info(
-            node_id,
-            display_name=data.display_name,
-            notes=data.notes,
-            management_tags=data.management_tags,
-        )
+    async with audit.capture(
+        action=AuditAction.NODE_MANAGEMENT_INFO_UPDATE,
+        target_type=AuditTargetType.ACCESS_NODE,
+        target_id=node_id,
+        target_label=None,
+    ) as tracked:
+        async with request.app.state.node_write_lock:
+            node = await AccessNodeManagementService(
+                session,
+                request.app.state.settings.credential_key,
+            ).update_info(
+                node_id,
+                display_name=data.display_name,
+                notes=data.notes,
+                management_tags=data.management_tags,
+                audit=tracked,
+            )
     return ManagedAccessNodeResponse.model_validate(node)
 
 
@@ -174,17 +182,28 @@ async def update_node_status(
     data: NodeStatusUpdate,
     request: Request,
     session: SessionDep,
-    _: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> ManagedAccessNodeResponse:
-    async with request.app.state.node_write_lock:
-        node = await AccessNodeManagementService(
-            session,
-            request.app.state.settings.credential_key,
-        ).set_status(
-            node_id,
-            management_status=data.management_status,
-            reason=data.reason,
-        )
+    async with audit.capture(
+        action=(
+            AuditAction.NODE_ENABLE
+            if data.management_status == "active"
+            else AuditAction.NODE_DISABLE
+        ),
+        target_type=AuditTargetType.ACCESS_NODE,
+        target_id=node_id,
+        target_label=None,
+    ) as tracked:
+        async with request.app.state.node_write_lock:
+            node = await AccessNodeManagementService(
+                session,
+                request.app.state.settings.credential_key,
+            ).set_status(
+                node_id,
+                management_status=data.management_status,
+                reason=data.reason,
+                audit=tracked,
+            )
     return ManagedAccessNodeResponse.model_validate(node)
 
 
@@ -194,13 +213,19 @@ async def rotate_node_token(
     data: NodeTokenRotation,
     request: Request,
     session: SessionDep,
-    _: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> ManagedAccessNodeResponse:
-    async with request.app.state.node_write_lock:
-        node = await AccessNodeManagementService(
-            session,
-            request.app.state.settings.credential_key,
-        ).rotate_token(node_id, data.token)
+    async with audit.capture(
+        action=AuditAction.NODE_TOKEN_ROTATE,
+        target_type=AuditTargetType.ACCESS_NODE,
+        target_id=node_id,
+        target_label=None,
+    ) as tracked:
+        async with request.app.state.node_write_lock:
+            node = await AccessNodeManagementService(
+                session,
+                request.app.state.settings.credential_key,
+            ).rotate_token(node_id, data.token, tracked)
     return ManagedAccessNodeResponse.model_validate(node)
 
 
