@@ -1,10 +1,13 @@
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import AppError
 from app.models.registration import AccessNode
 from app.schemas.heartbeat import ConnectivityStatus
+from app.services.crypto import CredentialCipher, node_token_fingerprint
 from app.services.node_status import ONLINE_WINDOW_SECONDS, STALE_WINDOW_SECONDS
 
 
@@ -33,6 +36,7 @@ class AccessNodeQueryService:
                 or_(
                     AccessNode.node_id.ilike(pattern),
                     AccessNode.reported_name.ilike(pattern),
+                    AccessNode.display_name.ilike(pattern),
                     AccessNode.hostname.ilike(pattern),
                     AccessNode.software_version.ilike(pattern),
                 )
@@ -81,3 +85,75 @@ class AccessNodeQueryService:
             ).all()
         )
         return nodes, total
+
+
+class AccessNodeManagementService:
+    def __init__(self, session: AsyncSession, credential_key: str) -> None:
+        self.session = session
+        self.credential_key = credential_key
+        self.cipher = CredentialCipher(credential_key)
+
+    async def _get(self, node_id: str) -> AccessNode:
+        node = await self.session.get(AccessNode, node_id)
+        if node is None:
+            raise AppError("NODE_NOT_FOUND", "接入节点不存在", status_code=404)
+        return node
+
+    async def update_info(
+        self,
+        node_id: str,
+        *,
+        display_name: str | None,
+        notes: str | None,
+        management_tags: list[str],
+    ) -> AccessNode:
+        node = await self._get(node_id)
+        node.display_name = display_name
+        node.notes = notes
+        node.management_tags = management_tags
+        await self.session.commit()
+        await self.session.refresh(node)
+        return node
+
+    async def set_status(
+        self,
+        node_id: str,
+        *,
+        management_status: str,
+        reason: str | None,
+    ) -> AccessNode:
+        node = await self._get(node_id)
+        node.management_status = management_status
+        node.disable_reason = reason if management_status == "disabled" else None
+        await self.session.commit()
+        await self.session.refresh(node)
+        return node
+
+    async def rotate_token(self, node_id: str, token: str) -> AccessNode:
+        node = await self._get(node_id)
+        fingerprint = node_token_fingerprint(self.credential_key, token)
+        owner = await self.session.scalar(
+            select(AccessNode.node_id).where(
+                AccessNode.token_fingerprint == fingerprint,
+                AccessNode.node_id != node_id,
+            )
+        )
+        if owner is not None:
+            raise AppError(
+                "NODE_TOKEN_DUPLICATE",
+                "Token 已被其他接入节点使用",
+                status_code=409,
+            )
+        node.encrypted_token = self.cipher.encrypt(token)
+        node.token_fingerprint = fingerprint
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            raise AppError(
+                "NODE_TOKEN_DUPLICATE",
+                "Token 已被其他接入节点使用",
+                status_code=409,
+            ) from None
+        await self.session.refresh(node)
+        return node

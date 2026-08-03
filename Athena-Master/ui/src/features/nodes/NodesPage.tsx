@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { Input, Select, Space, Table, Tag } from "antd";
+import { Alert, Button, Form, Input, Modal, Select, Space, Table, Tag } from "antd";
 import { useEffect, useState } from "react";
 
-import { nodesApi } from "../../shared/api/client";
+import { apiMessage, nodesApi } from "../../shared/api/client";
 import type {
   AccessNode,
   AssetLifecycleStatus,
@@ -14,6 +14,20 @@ import type {
   ListedAccessNode,
   NodeListParams
 } from "../../shared/api/types";
+
+interface ManagementInfoForm {
+  display_name?: string;
+  notes?: string;
+  management_tags: string[];
+}
+
+interface DisableForm {
+  reason?: string;
+}
+
+interface TokenForm {
+  token: string;
+}
 
 const MANAGEMENT_LABELS: Record<AccessNode["management_status"], string> = {
   pending: "待审批",
@@ -56,6 +70,9 @@ function pageAfterPaginationChange(
 }
 
 export function NodesPage() {
+  const [managementForm] = Form.useForm<ManagementInfoForm>();
+  const [disableForm] = Form.useForm<DisableForm>();
+  const [tokenForm] = Form.useForm<TokenForm>();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [searchInput, setSearchInput] = useState("");
@@ -77,6 +94,11 @@ export function NodesPage() {
   const [assetDetection, setAssetDetection] = useState<HostDetectionFilter>();
   const [assetTagInput, setAssetTagInput] = useState("");
   const [assetTag, setAssetTag] = useState("");
+  const [managementOpen, setManagementOpen] = useState(false);
+  const [disableOpen, setDisableOpen] = useState(false);
+  const [tokenOpen, setTokenOpen] = useState(false);
+  const [operationPending, setOperationPending] = useState(false);
+  const [operationError, setOperationError] = useState<string>();
 
   const params: NodeListParams = {
     page,
@@ -111,8 +133,96 @@ export function NodesPage() {
     queryFn: () => nodesApi.listAssets(selectedNodeId!, assetParams),
     enabled: Boolean(selectedNodeId)
   });
+  const selectedNode = query.data?.items.find((node) => node.node_id === selectedNodeId);
   const browserTimeZone =
     Intl.DateTimeFormat().resolvedOptions().timeZone || "浏览器本地时区";
+
+  async function refreshNodeState() {
+    await Promise.all([query.refetch(), assetsQuery.refetch()]);
+  }
+
+  function openManagement() {
+    if (!selectedNode) return;
+    managementForm.setFieldsValue({
+      display_name: selectedNode.display_name ?? undefined,
+      notes: selectedNode.notes ?? undefined,
+      management_tags: selectedNode.management_tags
+    });
+    setOperationError(undefined);
+    setManagementOpen(true);
+  }
+
+  async function saveManagement() {
+    if (!selectedNode) return;
+    try {
+      const values = await managementForm.validateFields();
+      setOperationPending(true);
+      setOperationError(undefined);
+      await nodesApi.updateInfo(selectedNode.node_id, {
+        display_name: values.display_name?.trim() || null,
+        notes: values.notes?.trim() || null,
+        management_tags: values.management_tags ?? []
+      });
+      setManagementOpen(false);
+      await refreshNodeState();
+    } catch (error) {
+      setOperationError(apiMessage(error));
+    } finally {
+      setOperationPending(false);
+    }
+  }
+
+  async function disableNode() {
+    if (!selectedNode) return;
+    try {
+      const values = await disableForm.validateFields();
+      setOperationPending(true);
+      setOperationError(undefined);
+      await nodesApi.updateStatus(
+        selectedNode.node_id,
+        "disabled",
+        values.reason?.trim()
+      );
+      setDisableOpen(false);
+      disableForm.resetFields();
+      await refreshNodeState();
+    } catch (error) {
+      setOperationError(apiMessage(error));
+    } finally {
+      setOperationPending(false);
+    }
+  }
+
+  async function enableNode() {
+    if (!selectedNode) return;
+    try {
+      setOperationPending(true);
+      setOperationError(undefined);
+      await nodesApi.updateStatus(selectedNode.node_id, "active");
+      await refreshNodeState();
+    } catch (error) {
+      setOperationError(apiMessage(error));
+    } finally {
+      setOperationPending(false);
+    }
+  }
+
+  async function rotateToken() {
+    if (!selectedNode) return;
+    try {
+      const { token } = await tokenForm.validateFields();
+      setOperationPending(true);
+      setOperationError(undefined);
+      await nodesApi.rotateToken(selectedNode.node_id, token);
+      tokenForm.resetFields();
+      setTokenOpen(false);
+      await refreshNodeState();
+    } catch (error) {
+      setOperationError(apiMessage(error));
+    } finally {
+      setOperationPending(false);
+    }
+  }
 
   return (
     <div className="page-stack">
@@ -228,7 +338,8 @@ export function NodesPage() {
               title: "接入节点",
               render: (_, node) => (
                 <Space direction="vertical" size={0}>
-                  <span className="primary-cell">{node.reported_name}</span>
+                  <span className="primary-cell">{node.effective_name}</span>
+                  <span className="muted">Node 上报名：{node.reported_name}</span>
                   <span className="muted">{node.node_id}</span>
                 </Space>
               )
@@ -272,6 +383,48 @@ export function NodesPage() {
             }
           ]}
         />
+        {operationError ? <Alert type="error" message={operationError} showIcon /> : null}
+        {selectedNode ? (
+          <section className="asset-section" aria-label="节点管理">
+            <Space direction="vertical" size={4}>
+              <h2>{selectedNode.effective_name}</h2>
+              <span>Node 上报名：{selectedNode.reported_name}</span>
+              <span className="muted">{selectedNode.notes || "暂无管理备注"}</span>
+              <span>
+                {selectedNode.management_tags.map((tag) => (
+                  <Tag key={tag}>{tag}</Tag>
+                ))}
+              </span>
+            </Space>
+            <Space wrap>
+              <Button onClick={openManagement}>编辑管理信息</Button>
+              {selectedNode.management_status === "disabled" ? (
+                <Button loading={operationPending} onClick={() => void enableNode()}>
+                  启用节点
+                </Button>
+              ) : (
+                <Button
+                  danger
+                  onClick={() => {
+                    setOperationError(undefined);
+                    setDisableOpen(true);
+                  }}
+                >
+                  禁用节点
+                </Button>
+              )}
+              <Button
+                onClick={() => {
+                  tokenForm.resetFields();
+                  setOperationError(undefined);
+                  setTokenOpen(true);
+                }}
+              >
+                更换 Token
+              </Button>
+            </Space>
+          </section>
+        ) : null}
         <div className="asset-section">
           <h2>主机资产</h2>
           <p className="muted">资产由所选接入节点的完整心跳快照维护，此页面只读。</p>
@@ -397,6 +550,70 @@ export function NodesPage() {
           />
         </div>
       </section>
+      <Modal
+        title="编辑管理信息"
+        open={managementOpen}
+        okText="保存"
+        confirmLoading={operationPending}
+        onOk={() => void saveManagement()}
+        onCancel={() => setManagementOpen(false)}
+      >
+        <Form form={managementForm} layout="vertical">
+          <Form.Item name="display_name" label="管理显示名">
+            <Input maxLength={100} />
+          </Form.Item>
+          <Form.Item name="notes" label="备注">
+            <Input.TextArea maxLength={1000} />
+          </Form.Item>
+          <Form.Item name="management_tags" label="管理标签">
+            <Select mode="tags" maxCount={20} tokenSeparators={[","]} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        title="禁用接入节点"
+        open={disableOpen}
+        okText="确认禁用"
+        okButtonProps={{ danger: true }}
+        confirmLoading={operationPending}
+        onOk={() => void disableNode()}
+        onCancel={() => setDisableOpen(false)}
+      >
+        <Form form={disableForm} layout="vertical">
+          <Form.Item name="reason" label="禁用原因（可选）">
+            <Input.TextArea maxLength={1000} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        title="更换 Node Token"
+        open={tokenOpen}
+        okText="确认更换"
+        confirmLoading={operationPending}
+        onOk={() => void rotateToken()}
+        onCancel={() => {
+          tokenForm.resetFields();
+          setTokenOpen(false);
+        }}
+      >
+        <Alert
+          type="warning"
+          message="更新成功后旧 Token 立即失效；新 Token 不会再次显示。"
+          showIcon
+        />
+        <Form form={tokenForm} layout="vertical">
+          <Form.Item
+            name="token"
+            label="新 Token"
+            rules={[
+              { required: true, message: "请输入新 Token" },
+              { min: 32, max: 256, message: "Token 长度必须为 32 至 256 个字符" }
+            ]}
+          >
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

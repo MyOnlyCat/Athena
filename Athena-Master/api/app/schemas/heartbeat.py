@@ -67,9 +67,14 @@ class AccessNodeListItem(BaseModel):
 
     node_id: str
     reported_name: str
+    display_name: str | None
+    effective_name: str
     hostname: str
     software_version: str
     management_status: ManagementStatus
+    notes: str | None
+    management_tags: list[str]
+    disable_reason: str | None
     connectivity_status: ConnectivityStatus
     approved_at: datetime
     last_heartbeat_at: datetime | None

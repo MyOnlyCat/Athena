@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from app.core.config import Settings
 from app.core.errors import AppError
@@ -77,6 +77,12 @@ class MasterRuntime:
         inventory_status = getattr(slot.inventory, "status", None)
         if inventory_status == "online":
             return "online"
+        if inventory_status in {
+            "disabled",
+            "authentication_failed",
+            "connection_failed",
+        }:
+            return cast(MasterRuntimeStatus, inventory_status)
         if inventory_status == "error":
             return "error"
         return "connecting"

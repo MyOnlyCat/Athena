@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "antd";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, vi } from "vitest";
 
@@ -8,7 +8,10 @@ import { NodesPage } from "../src/features/nodes/NodesPage";
 
 const apiMocks = vi.hoisted(() => ({
   list: vi.fn(),
-  listAssets: vi.fn()
+  listAssets: vi.fn(),
+  updateInfo: vi.fn(),
+  updateStatus: vi.fn(),
+  rotateToken: vi.fn()
 }));
 
 vi.mock("../src/shared/api/client", () => ({
@@ -35,9 +38,14 @@ beforeEach(() => {
       {
         node_id: "019d3a7e-7c42-7000-8000-000000000007",
         reported_name: "上海接入节点",
+        display_name: "上海生产节点",
+        effective_name: "上海生产节点",
         hostname: "athena-node-01",
         software_version: "0.2.0",
         management_status: "active",
+        notes: "由平台组维护",
+        management_tags: ["生产", "华东"],
+        disable_reason: null,
         connectivity_status: "stale",
         approved_at: "2026-07-31T08:00:00Z",
         last_heartbeat_at: "2026-07-31T09:00:00Z"
@@ -69,6 +77,9 @@ beforeEach(() => {
     page_size: 20,
     total: 1
   });
+  apiMocks.updateInfo.mockResolvedValue({});
+  apiMocks.updateStatus.mockResolvedValue({});
+  apiMocks.rotateToken.mockResolvedValue({});
 });
 
 test("shows the selected access node's read-only host assets", async () => {
@@ -89,7 +100,8 @@ test("shows the selected access node's read-only host assets", async () => {
 test("shows reported identity, management state, connectivity and last heartbeat", async () => {
   renderPage();
 
-  expect(await screen.findByText("上海接入节点")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "上海生产节点" })).toBeInTheDocument();
+  expect(screen.getAllByText("Node 上报名：上海接入节点")).toHaveLength(2);
   expect(screen.getByText("athena-node-01")).toBeInTheDocument();
   expect(screen.getByText("版本 0.2.0")).toBeInTheDocument();
   expect(screen.getByText("已启用")).toBeInTheDocument();
@@ -97,10 +109,111 @@ test("shows reported identity, management state, connectivity and last heartbeat
   expect(screen.getByText(/浏览器时区：/)).toBeInTheDocument();
 });
 
+test("updates administrator-owned node information without changing reported identity", async () => {
+  const user = userEvent.setup();
+  renderPage();
+  await screen.findByRole("heading", { name: "上海生产节点" });
+
+  await user.click(screen.getByRole("button", { name: "编辑管理信息" }));
+  const dialog = await screen.findByRole("dialog", { name: "编辑管理信息" });
+  const displayName = within(dialog).getByLabelText("管理显示名");
+  await user.clear(displayName);
+  await user.type(displayName, "上海核心节点");
+  await user.click(within(dialog).getByRole("button", { name: /保\s*存/ }));
+
+  await waitFor(() =>
+    expect(apiMocks.updateInfo).toHaveBeenCalledWith(
+      "019d3a7e-7c42-7000-8000-000000000007",
+      {
+        display_name: "上海核心节点",
+        notes: "由平台组维护",
+        management_tags: ["生产", "华东"]
+      }
+    )
+  );
+});
+
+test("disables a node with an optional reason and refreshes the list", async () => {
+  const user = userEvent.setup();
+  renderPage();
+  await screen.findByRole("heading", { name: "上海生产节点" });
+
+  await user.click(screen.getByRole("button", { name: "禁用节点" }));
+  const dialog = await screen.findByRole("dialog", { name: "禁用接入节点" });
+  await user.type(within(dialog).getByLabelText("禁用原因（可选）"), "计划维护");
+  await user.click(within(dialog).getByRole("button", { name: "确认禁用" }));
+
+  await waitFor(() =>
+    expect(apiMocks.updateStatus).toHaveBeenCalledWith(
+      "019d3a7e-7c42-7000-8000-000000000007",
+      "disabled",
+      "计划维护"
+    )
+  );
+  await waitFor(() => expect(apiMocks.list).toHaveBeenCalledTimes(2));
+});
+
+test("reenables a disabled node", async () => {
+  const user = userEvent.setup();
+  apiMocks.list.mockResolvedValueOnce({
+    items: [
+      {
+        node_id: "019d3a7e-7c42-7000-8000-000000000007",
+        reported_name: "上海接入节点",
+        display_name: null,
+        effective_name: "上海接入节点",
+        hostname: "athena-node-01",
+        software_version: "0.2.0",
+        management_status: "disabled",
+        notes: null,
+        management_tags: [],
+        disable_reason: null,
+        connectivity_status: "offline",
+        approved_at: "2026-07-31T08:00:00Z",
+        last_heartbeat_at: null
+      }
+    ],
+    page: 1,
+    page_size: 20,
+    total: 1
+  });
+  renderPage();
+  await screen.findByRole("heading", { name: "上海接入节点" });
+
+  await user.click(screen.getByRole("button", { name: "启用节点" }));
+
+  await waitFor(() =>
+    expect(apiMocks.updateStatus).toHaveBeenCalledWith(
+      "019d3a7e-7c42-7000-8000-000000000007",
+      "active"
+    )
+  );
+});
+
+test("rotates a Token without leaving the secret visible", async () => {
+  const user = userEvent.setup();
+  const replacement = "replacement-node-token-value-123456789";
+  renderPage();
+  await screen.findByRole("heading", { name: "上海生产节点" });
+
+  await user.click(screen.getByRole("button", { name: "更换 Token" }));
+  const dialog = await screen.findByRole("dialog", { name: "更换 Node Token" });
+  await user.type(within(dialog).getByLabelText("新 Token"), replacement);
+  await user.click(within(dialog).getByRole("button", { name: "确认更换" }));
+
+  await waitFor(() =>
+    expect(apiMocks.rotateToken).toHaveBeenCalledWith(
+      "019d3a7e-7c42-7000-8000-000000000007",
+      replacement
+    )
+  );
+  await waitFor(() => expect(screen.queryByDisplayValue(replacement)).not.toBeInTheDocument());
+});
+
 test("sends search, filtering and sorting to the server", async () => {
   const user = userEvent.setup();
   renderPage();
-  await screen.findByText("上海接入节点");
+  await screen.findByRole("heading", { name: "上海生产节点" });
 
   const search = screen.getByPlaceholderText("搜索名称、主机名、版本或节点 ID");
   await user.type(search, "上海{Enter}");
