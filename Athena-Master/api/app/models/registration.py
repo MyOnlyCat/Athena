@@ -68,6 +68,10 @@ class AccessNode(Base):
     )
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    @property
+    def effective_name(self) -> str:
+        return self.display_name or self.reported_name
+
 
 class NodeNonce(Base):
     __tablename__ = "node_nonces"

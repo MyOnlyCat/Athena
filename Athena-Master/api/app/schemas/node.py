@@ -2,6 +2,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+ManagementStatus = Literal["active", "disabled", "rejected", "pending"]
+MutableManagementStatus = Literal["active", "disabled"]
+
 
 def _optional_text(value: str | None) -> str | None:
     if value is None:
@@ -41,7 +44,7 @@ class NodeManagementInfoUpdate(BaseModel):
 class NodeStatusUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    management_status: Literal["active", "disabled"]
+    management_status: MutableManagementStatus
     reason: str | None = Field(default=None, max_length=1000)
 
     @field_validator("reason")
@@ -57,13 +60,15 @@ class NodeTokenRotation(BaseModel):
 
 
 class ManagedAccessNodeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     node_id: str
     reported_name: str
     display_name: str | None
     effective_name: str
     hostname: str
     software_version: str
-    management_status: str
+    management_status: ManagementStatus
     notes: str | None
     management_tags: list[str]
     disable_reason: str | None

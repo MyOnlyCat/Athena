@@ -231,3 +231,20 @@ async def test_rotating_token_rejects_a_token_owned_by_another_node(
         headers=signed_headers(body=body),
     )
     assert unchanged.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_rotating_token_rejects_the_current_token(client: AsyncClient) -> None:
+    admin_headers = await approve_node(client)
+
+    unchanged = await client.post(
+        "/api/v1/nodes/019d3a7e-7c42-7000-8000-000000000007/token",
+        headers=admin_headers,
+        json={"token": "node-token-for-authenticated-heartbeat"},
+    )
+
+    assert (unchanged.status_code, unchanged.json()["code"]) == (
+        409,
+        "NODE_TOKEN_UNCHANGED",
+    )
+    assert "node-token-for-authenticated-heartbeat" not in unchanged.text

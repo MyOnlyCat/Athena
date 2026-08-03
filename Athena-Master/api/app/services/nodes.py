@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.models.registration import AccessNode
 from app.schemas.heartbeat import ConnectivityStatus
+from app.schemas.node import ManagementStatus, MutableManagementStatus
 from app.services.crypto import CredentialCipher, node_token_fingerprint
 from app.services.node_status import ONLINE_WINDOW_SECONDS, STALE_WINDOW_SECONDS
 
@@ -21,7 +22,7 @@ class AccessNodeQueryService:
         page: int,
         page_size: int,
         search: str | None,
-        management_status: str | None,
+        management_status: ManagementStatus | None,
         requested_connectivity: ConnectivityStatus | None,
         sort_by: str,
         sort_order: str,
@@ -119,7 +120,7 @@ class AccessNodeManagementService:
         self,
         node_id: str,
         *,
-        management_status: str,
+        management_status: MutableManagementStatus,
         reason: str | None,
     ) -> AccessNode:
         node = await self._get(node_id)
@@ -132,6 +133,12 @@ class AccessNodeManagementService:
     async def rotate_token(self, node_id: str, token: str) -> AccessNode:
         node = await self._get(node_id)
         fingerprint = node_token_fingerprint(self.credential_key, token)
+        if node.token_fingerprint == fingerprint:
+            raise AppError(
+                "NODE_TOKEN_UNCHANGED",
+                "新 Token 必须与当前 Token 不同",
+                status_code=409,
+            )
         owner = await self.session.scalar(
             select(AccessNode.node_id).where(
                 AccessNode.token_fingerprint == fingerprint,

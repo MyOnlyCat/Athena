@@ -6,9 +6,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.core.time import as_utc
 from app.schemas.asset import HeartbeatHost
+from app.schemas.node import ManagedAccessNodeResponse
 
 ConnectivityStatus = Literal["online", "stale", "offline"]
-ManagementStatus = Literal["active", "disabled", "rejected", "pending"]
 
 
 class HeartbeatNode(BaseModel):
@@ -62,19 +62,7 @@ class HeartbeatAccepted(BaseModel):
         return as_utc(value)
 
 
-class AccessNodeListItem(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    node_id: str
-    reported_name: str
-    display_name: str | None
-    effective_name: str
-    hostname: str
-    software_version: str
-    management_status: ManagementStatus
-    notes: str | None
-    management_tags: list[str]
-    disable_reason: str | None
+class AccessNodeListItem(ManagedAccessNodeResponse):
     connectivity_status: ConnectivityStatus
     approved_at: datetime
     last_heartbeat_at: datetime | None

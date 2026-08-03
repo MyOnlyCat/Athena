@@ -5,7 +5,6 @@ from fastapi import APIRouter, Header, Query, Request
 
 from app.api.deps import CurrentUserDep, SessionDep
 from app.core.errors import AppError
-from app.models.registration import AccessNode
 from app.schemas.asset import (
     AssetLifecycleStatus,
     HostAssetItem,
@@ -20,6 +19,7 @@ from app.schemas.heartbeat import (
 )
 from app.schemas.node import (
     ManagedAccessNodeResponse,
+    ManagementStatus,
     NodeManagementInfoUpdate,
     NodeStatusUpdate,
     NodeTokenRotation,
@@ -31,21 +31,6 @@ from app.services.nodes import AccessNodeManagementService, AccessNodeQueryServi
 
 node_router = APIRouter(tags=["node-heartbeats"])
 admin_router = APIRouter(prefix="/nodes", tags=["nodes"])
-
-
-def managed_node_response(node: AccessNode) -> ManagedAccessNodeResponse:
-    return ManagedAccessNodeResponse(
-        node_id=node.node_id,
-        reported_name=node.reported_name,
-        display_name=node.display_name,
-        effective_name=node.display_name or node.reported_name,
-        hostname=node.hostname,
-        software_version=node.software_version,
-        management_status=node.management_status,
-        notes=node.notes,
-        management_tags=node.management_tags,
-        disable_reason=node.disable_reason,
-    )
 
 
 def path_with_query(request: Request) -> str:
@@ -110,7 +95,7 @@ async def list_nodes(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     search: Annotated[str | None, Query(max_length=255)] = None,
     management_status: Annotated[
-        Literal["active", "disabled", "rejected", "pending"] | None,
+        ManagementStatus | None,
         Query(),
     ] = None,
     connectivity_status_filter: Annotated[
@@ -143,16 +128,7 @@ async def list_nodes(
     return AccessNodePage(
         items=[
             AccessNodeListItem(
-                node_id=node.node_id,
-                reported_name=node.reported_name,
-                display_name=node.display_name,
-                effective_name=node.display_name or node.reported_name,
-                hostname=node.hostname,
-                software_version=node.software_version,
-                management_status=node.management_status,
-                notes=node.notes,
-                management_tags=node.management_tags,
-                disable_reason=node.disable_reason,
+                **ManagedAccessNodeResponse.model_validate(node).model_dump(),
                 connectivity_status=connectivity_status(
                     node.last_heartbeat_at,
                     now,
@@ -189,7 +165,7 @@ async def update_node_management_info(
             notes=data.notes,
             management_tags=data.management_tags,
         )
-    return managed_node_response(node)
+    return ManagedAccessNodeResponse.model_validate(node)
 
 
 @admin_router.patch("/{node_id}/status", response_model=ManagedAccessNodeResponse)
@@ -209,7 +185,7 @@ async def update_node_status(
             management_status=data.management_status,
             reason=data.reason,
         )
-    return managed_node_response(node)
+    return ManagedAccessNodeResponse.model_validate(node)
 
 
 @admin_router.post("/{node_id}/token", response_model=ManagedAccessNodeResponse)
@@ -225,7 +201,7 @@ async def rotate_node_token(
             session,
             request.app.state.settings.credential_key,
         ).rotate_token(node_id, data.token)
-    return managed_node_response(node)
+    return ManagedAccessNodeResponse.model_validate(node)
 
 
 @admin_router.get("/{node_id}/assets", response_model=HostAssetPage)

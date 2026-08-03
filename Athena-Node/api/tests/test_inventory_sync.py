@@ -137,7 +137,7 @@ async def test_heartbeat_connection_failure_reports_connection_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_poll_failure_after_heartbeat_reports_connection_state() -> None:
+async def test_poll_failure_does_not_change_heartbeat_connection_state() -> None:
     client = HeartbeatClient()
     sync = synchronizer(client)
     stop = asyncio.Event()
@@ -150,7 +150,7 @@ async def test_poll_failure_after_heartbeat_reports_connection_state() -> None:
     await sync.run(stop, failing_poll)
 
     assert client.calls == 1
-    assert sync.status == "connection_failed"
+    assert sync.status == "online"
 
 
 @pytest.mark.asyncio
@@ -259,25 +259,6 @@ async def test_pending_approval_retries_after_normal_heartbeat_interval(
 
     assert observed_timeouts == [60]
     assert sync.status == "pending"
-
-
-@pytest.mark.asyncio
-async def test_rejected_registration_waits_for_an_explicit_wakeup() -> None:
-    client = HeartbeatClient(
-        AppError("REGISTRATION_REJECTED", "接入申请已被拒绝", status_code=409)
-    )
-    sync = synchronizer(client)
-    stop = asyncio.Event()
-
-    worker = asyncio.create_task(sync.run(stop))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-
-    assert sync.status == "rejected"
-    assert client.calls == 1
-    stop.set()
-    sync.notify_change()
-    await worker
 
 
 class SequencedHeartbeatClient(HeartbeatClient):

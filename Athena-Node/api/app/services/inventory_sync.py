@@ -15,7 +15,6 @@ InventoryStatus = Literal[
     "online",
     "pending",
     "disabled",
-    "rejected",
     "authentication_failed",
     "connection_failed",
     "error",
@@ -28,6 +27,7 @@ CONNECTION_BACKOFF_MAX_SECONDS = 300
 AUTHENTICATION_ERROR_CODES = {
     "NODE_SIGNATURE_INVALID",
     "NODE_AUTH_INVALID",
+    "NODE_TIMESTAMP_INVALID",
     "REGISTRATION_TOKEN_INVALID",
 }
 
@@ -130,8 +130,6 @@ class InventorySynchronizer:
                 self.status = "authentication_failed"
             elif exc.code in {"NODE_NOT_FOUND", "NODE_NOT_APPROVED"}:
                 self.status = "pending"
-            elif exc.code == "REGISTRATION_REJECTED":
-                self.status = "rejected"
             else:
                 self.status = "error"
             raise
@@ -145,9 +143,6 @@ class InventorySynchronizer:
         if self.status in {"disabled", "authentication_failed"}:
             self._connection_failures = 0
             return MANAGEMENT_PROBE_SECONDS
-        if self.status == "rejected":
-            self._connection_failures = 0
-            return None
         if self.status == "connection_failed":
             self._connection_failures += 1
             exponent = min(self._connection_failures - 1, 6)
@@ -165,18 +160,19 @@ class InventorySynchronizer:
             self.changed.clear()
             try:
                 await self.sync_now()
-                if claim_callback is not None:
-                    await claim_callback()
             except Exception:
-                if self.status == "online":
-                    self.status = "connection_failed"
+                pass
+            else:
+                if claim_callback is not None:
+                    try:
+                        await claim_callback()
+                    except Exception:
+                        # Task delivery is independent from heartbeat connectivity.
+                        pass
             delay = self._retry_delay()
             if stop.is_set():
                 break
             try:
-                if delay is None:
-                    await self.changed.wait()
-                else:
-                    await asyncio.wait_for(self.changed.wait(), timeout=delay)
+                await asyncio.wait_for(self.changed.wait(), timeout=delay)
             except TimeoutError:
                 pass

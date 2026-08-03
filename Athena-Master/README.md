@@ -131,7 +131,8 @@ Node 上报名；心跳只更新上报名、hostname、版本和运行信息，�
 禁用不会删除节点身份、最后心跳或主机资产。Node 使用正确签名访问心跳接口时收到
 `403 NODE_DISABLED`，且 nonce、最后心跳和资产均不改变；重新启用后下一次有效探测
 自动恢复。Token 更换继续执行 32–256 字符、全局唯一、凭据密钥加密和永不回显规则；
-更新提交后旧 Token 立即失效。Token 轮换不是双 Token 切换，管理员应先在 Node 本地
+与当前 Token 相同的值返回 `409 NODE_TOKEN_UNCHANGED`。更新提交后旧 Token 立即失效。
+Token 轮换不是双 Token 切换，管理员应先在 Node 本地
 准备新 Token，再在 Master 输入相同值，并接受短暂离线窗口。
 
 ## 主机资产快照

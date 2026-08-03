@@ -211,6 +211,8 @@ def test_pending_registration_refreshes_to_rejected_and_stops_pending_state(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    status_checks = 0
+
     class FakeRegistrationClient:
         def __init__(self, base_url: str, node_id: str, token: str) -> None:
             del base_url, node_id, token
@@ -220,6 +222,8 @@ def test_pending_registration_refreshes_to_rejected_and_stops_pending_state(
             return {"status": "pending"}
 
         async def get_registration_status(self) -> dict[str, Any]:
+            nonlocal status_checks
+            status_checks += 1
             return {"status": "rejected"}
 
         async def close(self) -> None:
@@ -248,7 +252,13 @@ def test_pending_registration_refreshes_to_rejected_and_stops_pending_state(
             "/api/v1/master-settings/registration/status",
             headers=headers,
         )
+        repeated = client.post(
+            "/api/v1/master-settings/registration/status",
+            headers=headers,
+        )
         refreshed = client.get("/api/v1/master-settings", headers=headers)
 
     assert synchronized.json() == {"status": "rejected"}
+    assert repeated.json() == {"status": "rejected"}
+    assert status_checks == 1
     assert refreshed.json()["registration_status"] == "rejected"
