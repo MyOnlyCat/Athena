@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,11 +10,37 @@ from app.core.errors import AppError
 from app.models.audit import AuditLog
 
 
+class AuditAction(StrEnum):
+    AUTH_LOGIN = "auth.login"
+    ADMINISTRATOR_CREATE = "administrator.create"
+    ADMINISTRATOR_ENABLE = "administrator.enable"
+    ADMINISTRATOR_DISABLE = "administrator.disable"
+    ADMINISTRATOR_PASSWORD_RESET = "administrator.password_reset"
+    REGISTRATION_APPROVE = "registration.approve"
+    REGISTRATION_REJECT = "registration.reject"
+    REGISTRATION_RESTORE = "registration.restore"
+    NODE_MANAGEMENT_INFO_UPDATE = "node.management_info.update"
+    NODE_ENABLE = "node.enable"
+    NODE_DISABLE = "node.disable"
+    NODE_TOKEN_ROTATE = "node.token.rotate"
+
+
+class AuditTargetType(StrEnum):
+    ADMINISTRATOR = "administrator"
+    REGISTRATION_APPLICATION = "registration_application"
+    ACCESS_NODE = "access_node"
+
+
+class AuditResult(StrEnum):
+    SUCCESS = "success"
+    FAILURE = "failure"
+
+
 @dataclass
 class AuditedAction:
     session: AsyncSession
-    action: str
-    target_type: str
+    action: AuditAction
+    target_type: AuditTargetType
     target_id: str | None
     target_label: str | None
     source_ip: str | None
@@ -29,26 +56,26 @@ class AuditedAction:
         self.target_id = target_id
         self.target_label = target_label
 
-    def _build_log(self, result: str, error_code: str | None) -> AuditLog:
+    def _build_log(self, result: AuditResult, error_code: str | None) -> AuditLog:
         return AuditLog(
             actor_id=self.actor_id,
             actor_username=self.actor_username,
-            action=self.action,
-            target_type=self.target_type,
+            action=self.action.value,
+            target_type=self.target_type.value,
             target_id=self.target_id,
             target_label=self.target_label,
-            result=result,
+            result=result.value,
             source_ip=self.source_ip,
             error_code=error_code,
         )
 
     async def commit_success(self) -> None:
-        self.session.add(self._build_log("success", None))
+        self.session.add(self._build_log(AuditResult.SUCCESS, None))
         await self.session.commit()
         self.success_persisted = True
 
     async def commit_failure(self, error_code: str) -> None:
-        self.session.add(self._build_log("failure", error_code))
+        self.session.add(self._build_log(AuditResult.FAILURE, error_code))
         await self.session.commit()
 
 
@@ -72,8 +99,8 @@ class AuditService:
     async def capture(
         self,
         *,
-        action: str,
-        target_type: str,
+        action: AuditAction,
+        target_type: AuditTargetType,
         target_id: str | None,
         target_label: str | None,
         source_ip: str | None,

@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, Query, Request
 
-from app.api.deps import AuditServiceDep, CurrentUserDep, SessionDep
+from app.api.deps import AuthenticatedAuditDep, CurrentUserDep, SessionDep
 from app.core.errors import AppError
 from app.schemas.asset import (
     AssetLifecycleStatus,
@@ -25,6 +25,7 @@ from app.schemas.node import (
     NodeTokenRotation,
 )
 from app.services.assets import HostAssetQueryService
+from app.services.audit import AuditAction, AuditTargetType
 from app.services.heartbeats import MAX_HEARTBEAT_BODY_BYTES, HeartbeatService
 from app.services.node_status import connectivity_status
 from app.services.nodes import AccessNodeManagementService, AccessNodeQueryService
@@ -153,17 +154,13 @@ async def update_node_management_info(
     data: NodeManagementInfoUpdate,
     request: Request,
     session: SessionDep,
-    audit: AuditServiceDep,
-    actor: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> ManagedAccessNodeResponse:
     async with audit.capture(
-        action="node.management_info.update",
-        target_type="access_node",
+        action=AuditAction.NODE_MANAGEMENT_INFO_UPDATE,
+        target_type=AuditTargetType.ACCESS_NODE,
         target_id=node_id,
         target_label=None,
-        source_ip=request.client.host if request.client else None,
-        actor_id=actor.id,
-        actor_username=actor.username,
     ) as tracked:
         async with request.app.state.node_write_lock:
             node = await AccessNodeManagementService(
@@ -185,17 +182,17 @@ async def update_node_status(
     data: NodeStatusUpdate,
     request: Request,
     session: SessionDep,
-    audit: AuditServiceDep,
-    actor: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> ManagedAccessNodeResponse:
     async with audit.capture(
-        action="node.enable" if data.management_status == "active" else "node.disable",
-        target_type="access_node",
+        action=(
+            AuditAction.NODE_ENABLE
+            if data.management_status == "active"
+            else AuditAction.NODE_DISABLE
+        ),
+        target_type=AuditTargetType.ACCESS_NODE,
         target_id=node_id,
         target_label=None,
-        source_ip=request.client.host if request.client else None,
-        actor_id=actor.id,
-        actor_username=actor.username,
     ) as tracked:
         async with request.app.state.node_write_lock:
             node = await AccessNodeManagementService(
@@ -216,17 +213,13 @@ async def rotate_node_token(
     data: NodeTokenRotation,
     request: Request,
     session: SessionDep,
-    audit: AuditServiceDep,
-    actor: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> ManagedAccessNodeResponse:
     async with audit.capture(
-        action="node.token.rotate",
-        target_type="access_node",
+        action=AuditAction.NODE_TOKEN_ROTATE,
+        target_type=AuditTargetType.ACCESS_NODE,
         target_id=node_id,
         target_label=None,
-        source_ip=request.client.host if request.client else None,
-        actor_id=actor.id,
-        actor_username=actor.username,
     ) as tracked:
         async with request.app.state.node_write_lock:
             node = await AccessNodeManagementService(

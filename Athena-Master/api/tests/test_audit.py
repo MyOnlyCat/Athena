@@ -4,6 +4,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
 
+from app.models.registration import AccessNode
 from app.services.crypto import node_token_fingerprint
 from tests.test_asset_snapshots import heartbeat_with_hosts, reported_host
 from tests.test_heartbeats import (
@@ -270,12 +271,17 @@ async def test_registration_and_node_management_actions_are_audited_without_toke
         ("node.token.rotate", "failure"),
     }.issubset(action_results)
     serialized = json.dumps(page, ensure_ascii=False)
+    async with app.state.session_factory() as session:
+        stored_node = await session.get(AccessNode, node_id)
+        assert stored_node is not None
+        encrypted_token = stored_node.encrypted_token
     for secret in (token, wrong_token, rejected_token, replacement_token):
         assert secret not in serialized
         assert (
             node_token_fingerprint(app.state.settings.credential_key, secret)
             not in serialized
         )
+    assert encrypted_token not in serialized
     assert all("details" not in event for event in events)  # type: ignore[union-attr]
 
 

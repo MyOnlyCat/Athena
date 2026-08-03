@@ -3,9 +3,9 @@ import { Alert, Table, Tag } from "antd";
 import { useState } from "react";
 
 import { apiMessage, auditApi } from "../../shared/api/client";
-import type { AuditLog } from "../../shared/api/types";
+import type { AuditAction, AuditLog } from "../../shared/api/types";
 
-const ACTION_LABELS: Record<string, string> = {
+const ACTION_LABELS: Record<AuditAction, string> = {
   "auth.login": "管理员登录",
   "administrator.create": "创建管理员",
   "administrator.enable": "启用管理员",

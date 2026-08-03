@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 
 from app.api.deps import (
-    AuditServiceDep,
+    AuthenticatedAuditDep,
     CurrentUserDep,
     SessionDep,
     enforce_node_request_limit,
@@ -18,6 +18,7 @@ from app.schemas.registration import (
     RegistrationStatusResponse,
     RegistrationSubmitted,
 )
+from app.services.audit import AuditAction, AuditTargetType
 from app.services.registrations import RegistrationService
 
 node_router = APIRouter(
@@ -121,17 +122,13 @@ async def approve_registration_application(
     data: RegistrationApproval,
     request: Request,
     session: SessionDep,
-    audit: AuditServiceDep,
-    actor: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> AccessNodeResponse:
     async with audit.capture(
-        action="registration.approve",
-        target_type="registration_application",
+        action=AuditAction.REGISTRATION_APPROVE,
+        target_type=AuditTargetType.REGISTRATION_APPLICATION,
         target_id=application_id,
         target_label=None,
-        source_ip=request.client.host if request.client else None,
-        actor_id=actor.id,
-        actor_username=actor.username,
     ) as tracked:
         async with request.app.state.registration_write_lock:
             node = await service(request, session).approve(
@@ -152,17 +149,13 @@ async def reject_registration_application(
     data: RegistrationRejection,
     request: Request,
     session: SessionDep,
-    audit: AuditServiceDep,
-    actor: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> RegistrationApplicationResponse:
     async with audit.capture(
-        action="registration.reject",
-        target_type="registration_application",
+        action=AuditAction.REGISTRATION_REJECT,
+        target_type=AuditTargetType.REGISTRATION_APPLICATION,
         target_id=application_id,
         target_label=None,
-        source_ip=request.client.host if request.client else None,
-        actor_id=actor.id,
-        actor_username=actor.username,
     ) as tracked:
         async with request.app.state.registration_write_lock:
             application = await service(request, session).reject(
@@ -182,17 +175,13 @@ async def restore_registration_application(
     application_id: str,
     request: Request,
     session: SessionDep,
-    audit: AuditServiceDep,
-    actor: CurrentUserDep,
+    audit: AuthenticatedAuditDep,
 ) -> RegistrationApplicationResponse:
     async with audit.capture(
-        action="registration.restore",
-        target_type="registration_application",
+        action=AuditAction.REGISTRATION_RESTORE,
+        target_type=AuditTargetType.REGISTRATION_APPLICATION,
         target_id=application_id,
         target_label=None,
-        source_ip=request.client.host if request.client else None,
-        actor_id=actor.id,
-        actor_username=actor.username,
     ) as tracked:
         async with request.app.state.registration_write_lock:
             application = await service(request, session).restore(application_id, tracked)

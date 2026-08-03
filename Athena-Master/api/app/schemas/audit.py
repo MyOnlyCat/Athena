@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.core.time import as_utc
+from app.services.audit import AuditAction, AuditResult, AuditTargetType
 
 
 class AuditLogResponse(BaseModel):
@@ -11,11 +12,11 @@ class AuditLogResponse(BaseModel):
     id: str
     actor_id: str | None
     actor_username: str | None
-    action: str
-    target_type: str
+    action: AuditAction
+    target_type: AuditTargetType
     target_id: str | None
     target_label: str | None
-    result: str
+    result: AuditResult
     source_ip: str | None
     error_code: str | None
     created_at: datetime

@@ -5,6 +5,7 @@ from app.core.errors import AppError
 from app.models.user import User
 from app.schemas.auth import LoginRequest, LoginResponse
 from app.schemas.user import UserResponse
+from app.services.audit import AuditAction, AuditTargetType
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -20,8 +21,8 @@ async def login(
     throttle = request.app.state.login_throttle
     normalized_username = data.username.strip().casefold()
     async with audit.capture(
-        action="auth.login",
-        target_type="administrator",
+        action=AuditAction.AUTH_LOGIN,
+        target_type=AuditTargetType.ADMINISTRATOR,
         target_id=normalized_username,
         target_label=data.username.strip(),
         source_ip=source_ip,
