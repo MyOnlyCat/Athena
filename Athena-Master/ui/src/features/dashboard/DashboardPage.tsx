@@ -2,14 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, Statistic } from "antd";
 
 import { apiMessage, overviewApi } from "../../shared/api/client";
-
-const REFRESH_INTERVAL_MS = 30_000;
+import {
+  OVERVIEW_QUERY_KEY,
+  STATUS_REFRESH_INTERVAL_MS
+} from "../../shared/api/queryPolicy";
 
 export function DashboardPage() {
   const query = useQuery({
-    queryKey: ["overview"],
+    queryKey: OVERVIEW_QUERY_KEY,
     queryFn: overviewApi.get,
-    refetchInterval: REFRESH_INTERVAL_MS
+    refetchInterval: STATUS_REFRESH_INTERVAL_MS
   });
   const overview = query.data;
 

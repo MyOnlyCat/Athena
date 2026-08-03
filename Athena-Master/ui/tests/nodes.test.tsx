@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "antd";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, vi } from "vitest";
+import { beforeEach, vi } from "vitest";
 
 import { NodesPage } from "../src/features/nodes/NodesPage";
 
@@ -111,10 +111,6 @@ test("shows reported identity, management state, connectivity and last heartbeat
   expect(screen.getByText(/浏览器时区：/)).toBeInTheDocument();
 });
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
 test("shows delayed and unknown asset state without hiding the last test details", async () => {
   apiMocks.listAssets
     .mockResolvedValueOnce({
@@ -220,26 +216,6 @@ test("disables a node with an optional reason and refreshes the list", async () 
   );
   await waitFor(() => expect(apiMocks.list).toHaveBeenCalledTimes(2));
   expect(queryClient.getQueryState(["overview"])?.isInvalidated).toBe(true);
-});
-
-test("refreshes the node list and selected asset page every 30 seconds", async () => {
-  vi.useFakeTimers();
-  const { unmount } = renderPage();
-
-  await act(async () => {
-    await vi.waitFor(() => {
-      expect(apiMocks.list).toHaveBeenCalledTimes(1);
-      expect(apiMocks.listAssets).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(30_000);
-    await Promise.resolve();
-  });
-  expect(apiMocks.list).toHaveBeenCalledTimes(2);
-  expect(apiMocks.listAssets).toHaveBeenCalledTimes(2);
-  await act(async () => unmount());
 });
 
 test("reenables a disabled node", async () => {

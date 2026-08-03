@@ -3,6 +3,10 @@ import { Alert, Button, Form, Input, Modal, Select, Space, Table, Tag } from "an
 import { useEffect, useState } from "react";
 
 import { apiMessage, nodesApi } from "../../shared/api/client";
+import {
+  OVERVIEW_QUERY_KEY,
+  STATUS_REFRESH_INTERVAL_MS
+} from "../../shared/api/queryPolicy";
 import type {
   AccessNode,
   AssetLifecycleStatus,
@@ -47,8 +51,6 @@ const HOST_STATUS_LABELS: Record<HostTestStatus, string> = {
   failed: "连接失败",
   pending_trust: "待确认指纹"
 };
-
-const REFRESH_INTERVAL_MS = 30_000;
 
 function formatLocalTime(value: string | null): string {
   if (!value) return "尚未收到心跳";
@@ -115,7 +117,7 @@ export function NodesPage() {
   const query = useQuery({
     queryKey: ["nodes", params],
     queryFn: () => nodesApi.list(params),
-    refetchInterval: REFRESH_INTERVAL_MS
+    refetchInterval: STATUS_REFRESH_INTERVAL_MS
   });
   useEffect(() => {
     const nodes = query.data?.items ?? [];
@@ -136,7 +138,7 @@ export function NodesPage() {
     queryKey: ["node-assets", selectedNodeId, assetParams],
     queryFn: () => nodesApi.listAssets(selectedNodeId!, assetParams),
     enabled: Boolean(selectedNodeId),
-    refetchInterval: REFRESH_INTERVAL_MS
+    refetchInterval: STATUS_REFRESH_INTERVAL_MS
   });
   const selectedNode = query.data?.items.find((node) => node.node_id === selectedNodeId);
   const browserTimeZone =
@@ -144,7 +146,7 @@ export function NodesPage() {
 
   async function refreshNodeState() {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["overview"] }),
+      queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY }),
       query.refetch(),
       assetsQuery.refetch()
     ]);

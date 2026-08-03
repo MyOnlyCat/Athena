@@ -1,6 +1,6 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.asset import HostAsset
@@ -10,7 +10,7 @@ from app.schemas.overview import (
     OverviewNodeCounts,
     OverviewResponse,
 )
-from app.services.node_status import ONLINE_WINDOW_SECONDS, STALE_WINDOW_SECONDS
+from app.services.node_status import connectivity_filters
 
 
 class OverviewQueryService:
@@ -18,8 +18,7 @@ class OverviewQueryService:
         self.session = session
 
     async def get(self, now: datetime) -> OverviewResponse:
-        online_cutoff = now - timedelta(seconds=ONLINE_WINDOW_SECONDS)
-        offline_cutoff = now - timedelta(seconds=STALE_WINDOW_SECONDS)
+        connectivity = connectivity_filters(now)
 
         node_row = (
             await self.session.execute(
@@ -29,26 +28,38 @@ class OverviewQueryService:
                     func.count().filter(AccessNode.management_status == "active"),
                     func.count().filter(AccessNode.management_status == "disabled"),
                     func.count().filter(AccessNode.management_status == "rejected"),
-                    func.count().filter(AccessNode.last_heartbeat_at > online_cutoff),
-                    func.count().filter(
-                        AccessNode.last_heartbeat_at <= online_cutoff,
-                        AccessNode.last_heartbeat_at >= offline_cutoff,
-                    ),
-                    func.count().filter(
-                        or_(
-                            AccessNode.last_heartbeat_at.is_(None),
-                            AccessNode.last_heartbeat_at < offline_cutoff,
-                        )
-                    ),
+                    func.count().filter(connectivity["online"]),
+                    func.count().filter(connectivity["stale"]),
+                    func.count().filter(connectivity["offline"]),
                 )
             )
         ).one()
+        latest_applications = select(
+            RegistrationApplication.node_id.label("node_id"),
+            RegistrationApplication.status.label("status"),
+            func.row_number()
+            .over(
+                partition_by=RegistrationApplication.node_id,
+                order_by=(
+                    RegistrationApplication.received_at.desc(),
+                    RegistrationApplication.id.desc(),
+                ),
+            )
+            .label("recency"),
+        ).subquery()
+        has_formal_node = exists(
+            select(AccessNode.node_id).where(
+                AccessNode.node_id == latest_applications.c.node_id
+            )
+        )
         application_row = (
             await self.session.execute(
                 select(
-                    func.count().filter(RegistrationApplication.status == "pending"),
-                    func.count().filter(RegistrationApplication.status == "rejected"),
+                    func.count().filter(latest_applications.c.status == "pending"),
+                    func.count().filter(latest_applications.c.status == "rejected"),
                 )
+                .select_from(latest_applications)
+                .where(latest_applications.c.recency == 1, ~has_formal_node)
             )
         ).one()
         asset_row = (
@@ -57,14 +68,9 @@ class OverviewQueryService:
                     func.count(HostAsset.host_id),
                     func.count().filter(
                         HostAsset.last_test_status == "failed",
-                        AccessNode.last_heartbeat_at > online_cutoff,
+                        connectivity["online"],
                     ),
-                    func.count().filter(
-                        or_(
-                            AccessNode.last_heartbeat_at.is_(None),
-                            AccessNode.last_heartbeat_at < offline_cutoff,
-                        )
-                    ),
+                    func.count().filter(connectivity["offline"]),
                 )
                 .join(AccessNode, AccessNode.node_id == HostAsset.node_id)
                 .where(HostAsset.retired_at.is_(None))

@@ -106,6 +106,21 @@ async def test_overview_aggregates_node_and_active_asset_health(
                     now=now,
                 ),
                 application(
+                    "019d3a7e-7c42-7000-8000-000000000013",
+                    status="pending",
+                    now=now + timedelta(seconds=1),
+                ),
+                application(
+                    ONLINE_NODE_ID,
+                    status="pending",
+                    now=now,
+                ),
+                application(
+                    "019d3a7e-7c42-7000-8000-000000000014",
+                    status="pending",
+                    now=now - timedelta(seconds=1),
+                ),
+                application(
                     "019d3a7e-7c42-7000-8000-000000000014",
                     status="rejected",
                     now=now,
@@ -238,3 +253,54 @@ def test_connectivity_boundaries_are_stable() -> None:
     assert connectivity_status(now - timedelta(seconds=120), now) == "stale"
     assert connectivity_status(now - timedelta(seconds=300), now) == "stale"
     assert connectivity_status(now - timedelta(seconds=301), now) == "offline"
+
+
+@pytest.mark.asyncio
+async def test_overview_api_keeps_exact_120_and_300_second_boundaries_stale(
+    client: AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_now = datetime(2026, 8, 3, 2, 0, tzinfo=UTC)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> "FrozenDateTime":
+            return cls.fromtimestamp(fixed_now.timestamp(), tz=UTC)
+
+    monkeypatch.setattr("app.api.v1.overview.datetime", FrozenDateTime)
+    async with app.state.session_factory() as session:
+        session.add_all(
+            [
+                access_node(
+                    ONLINE_NODE_ID,
+                    name="boundary-120",
+                    management_status="active",
+                    last_heartbeat_at=fixed_now - timedelta(seconds=120),
+                ),
+                access_node(
+                    STALE_NODE_ID,
+                    name="boundary-300",
+                    management_status="active",
+                    last_heartbeat_at=fixed_now - timedelta(seconds=300),
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await client.get(
+        "/api/v1/overview",
+        headers=await login_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["nodes"] == {
+        "total": 2,
+        "pending": 0,
+        "active": 2,
+        "disabled": 0,
+        "rejected": 0,
+        "online": 0,
+        "stale": 2,
+        "offline": 0,
+    }

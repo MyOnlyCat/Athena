@@ -6,6 +6,7 @@ import {
   apiMessage,
   registrationApplicationsApi
 } from "../../shared/api/client";
+import { OVERVIEW_QUERY_KEY } from "../../shared/api/queryPolicy";
 import type { RegistrationApplication } from "../../shared/api/types";
 
 function formatLocalTime(value: string): string {
@@ -44,7 +45,7 @@ export function RegistrationApplicationsPage() {
       message.success("注册申请已批准");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["registration-applications"] }),
-        queryClient.invalidateQueries({ queryKey: ["overview"] })
+        queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
       ]);
     },
     onError: (error) => message.error(apiMessage(error))
@@ -58,7 +59,7 @@ export function RegistrationApplicationsPage() {
       message.success("注册申请已拒绝");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["registration-applications"] }),
-        queryClient.invalidateQueries({ queryKey: ["overview"] })
+        queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
       ]);
     },
     onError: (error) => message.error(apiMessage(error))
@@ -69,7 +70,7 @@ export function RegistrationApplicationsPage() {
       message.success("注册申请已恢复，Node 可手动重新提交");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["registration-applications"] }),
-        queryClient.invalidateQueries({ queryKey: ["overview"] })
+        queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
       ]);
     },
     onError: (error) => message.error(apiMessage(error))

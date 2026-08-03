@@ -259,7 +259,8 @@ Node 上报的资产字段。
 
 管理员通过 `GET /api/v1/overview` 获取健康概览。响应包含：
 
-- 接入节点总数及 `pending`、`active`、`disabled`、`rejected` 管理状态数量；
+- 接入节点总数及 `pending`、`active`、`disabled`、`rejected` 管理状态数量；待审批和
+  已拒绝按尚无正式身份的唯一 Node ID 的最新申请状态统计，重复与历史申请不重复计数；
 - `online`、`stale`、`offline` 正式接入节点数量；
 - 在管资产总数、明确异常和状态未知数量。
 
