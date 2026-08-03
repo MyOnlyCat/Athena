@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, Query, Request
 
-from app.api.deps import CurrentUserDep, SessionDep
+from app.api.deps import AuditServiceDep, CurrentUserDep, SessionDep
 from app.core.errors import AppError
 from app.schemas.asset import (
     AssetLifecycleStatus,
@@ -153,18 +153,29 @@ async def update_node_management_info(
     data: NodeManagementInfoUpdate,
     request: Request,
     session: SessionDep,
-    _: CurrentUserDep,
+    audit: AuditServiceDep,
+    actor: CurrentUserDep,
 ) -> ManagedAccessNodeResponse:
-    async with request.app.state.node_write_lock:
-        node = await AccessNodeManagementService(
-            session,
-            request.app.state.settings.credential_key,
-        ).update_info(
-            node_id,
-            display_name=data.display_name,
-            notes=data.notes,
-            management_tags=data.management_tags,
-        )
+    async with audit.capture(
+        action="node.management_info.update",
+        target_type="access_node",
+        target_id=node_id,
+        target_label=None,
+        source_ip=request.client.host if request.client else None,
+        actor_id=actor.id,
+        actor_username=actor.username,
+    ) as tracked:
+        async with request.app.state.node_write_lock:
+            node = await AccessNodeManagementService(
+                session,
+                request.app.state.settings.credential_key,
+            ).update_info(
+                node_id,
+                display_name=data.display_name,
+                notes=data.notes,
+                management_tags=data.management_tags,
+                audit=tracked,
+            )
     return ManagedAccessNodeResponse.model_validate(node)
 
 
@@ -174,17 +185,28 @@ async def update_node_status(
     data: NodeStatusUpdate,
     request: Request,
     session: SessionDep,
-    _: CurrentUserDep,
+    audit: AuditServiceDep,
+    actor: CurrentUserDep,
 ) -> ManagedAccessNodeResponse:
-    async with request.app.state.node_write_lock:
-        node = await AccessNodeManagementService(
-            session,
-            request.app.state.settings.credential_key,
-        ).set_status(
-            node_id,
-            management_status=data.management_status,
-            reason=data.reason,
-        )
+    async with audit.capture(
+        action="node.enable" if data.management_status == "active" else "node.disable",
+        target_type="access_node",
+        target_id=node_id,
+        target_label=None,
+        source_ip=request.client.host if request.client else None,
+        actor_id=actor.id,
+        actor_username=actor.username,
+    ) as tracked:
+        async with request.app.state.node_write_lock:
+            node = await AccessNodeManagementService(
+                session,
+                request.app.state.settings.credential_key,
+            ).set_status(
+                node_id,
+                management_status=data.management_status,
+                reason=data.reason,
+                audit=tracked,
+            )
     return ManagedAccessNodeResponse.model_validate(node)
 
 
@@ -194,13 +216,23 @@ async def rotate_node_token(
     data: NodeTokenRotation,
     request: Request,
     session: SessionDep,
-    _: CurrentUserDep,
+    audit: AuditServiceDep,
+    actor: CurrentUserDep,
 ) -> ManagedAccessNodeResponse:
-    async with request.app.state.node_write_lock:
-        node = await AccessNodeManagementService(
-            session,
-            request.app.state.settings.credential_key,
-        ).rotate_token(node_id, data.token)
+    async with audit.capture(
+        action="node.token.rotate",
+        target_type="access_node",
+        target_id=node_id,
+        target_label=None,
+        source_ip=request.client.host if request.client else None,
+        actor_id=actor.id,
+        actor_username=actor.username,
+    ) as tracked:
+        async with request.app.state.node_write_lock:
+            node = await AccessNodeManagementService(
+                session,
+                request.app.state.settings.credential_key,
+            ).rotate_token(node_id, data.token, tracked)
     return ManagedAccessNodeResponse.model_validate(node)
 
 

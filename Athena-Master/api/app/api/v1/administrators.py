@@ -1,8 +1,8 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 
-from app.api.deps import AuthServiceDep, CurrentUserDep
+from app.api.deps import AuditServiceDep, AuthServiceDep, CurrentUserDep
 from app.models.user import User
 from app.schemas.user import (
     PasswordReset,
@@ -34,20 +34,49 @@ async def list_administrators(
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_administrator(
     data: UserCreate,
+    request: Request,
     auth: AuthServiceDep,
-    _: CurrentUserDep,
+    audit: AuditServiceDep,
+    actor: CurrentUserDep,
 ) -> User:
-    return await auth.users.create(data)
+    async with audit.capture(
+        action="administrator.create",
+        target_type="administrator",
+        target_id=data.username.casefold(),
+        target_label=data.username,
+        source_ip=request.client.host if request.client else None,
+        actor_id=actor.id,
+        actor_username=actor.username,
+    ) as tracked:
+        created = await auth.users.create(data, tracked)
+    return created
 
 
 @router.patch("/{administrator_id}/status", response_model=UserResponse)
 async def set_administrator_status(
     administrator_id: str,
     data: UserStatusUpdate,
+    request: Request,
     auth: AuthServiceDep,
+    audit: AuditServiceDep,
     actor: CurrentUserDep,
 ) -> User:
-    return await auth.users.set_active(administrator_id, data.is_active, actor.id)
+    async with audit.capture(
+        action="administrator.enable" if data.is_active else "administrator.disable",
+        target_type="administrator",
+        target_id=administrator_id,
+        target_label=None,
+        source_ip=request.client.host if request.client else None,
+        actor_id=actor.id,
+        actor_username=actor.username,
+    ) as tracked:
+        updated = await auth.users.set_active(
+            administrator_id,
+            data.is_active,
+            actor.id,
+            tracked,
+        )
+    return updated
 
 
 @router.post(
@@ -57,8 +86,19 @@ async def set_administrator_status(
 async def reset_administrator_password(
     administrator_id: str,
     data: PasswordReset,
+    request: Request,
     auth: AuthServiceDep,
-    _: CurrentUserDep,
+    audit: AuditServiceDep,
+    actor: CurrentUserDep,
 ) -> Response:
-    await auth.users.reset_password(administrator_id, data.password)
+    async with audit.capture(
+        action="administrator.password_reset",
+        target_type="administrator",
+        target_id=administrator_id,
+        target_label=None,
+        source_ip=request.client.host if request.client else None,
+        actor_id=actor.id,
+        actor_username=actor.username,
+    ) as tracked:
+        await auth.users.reset_password(administrator_id, data.password, tracked)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

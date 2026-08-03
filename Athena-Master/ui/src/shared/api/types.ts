@@ -13,6 +13,27 @@ export interface UserPage {
   total: number;
 }
 
+export interface AuditLog {
+  id: string;
+  actor_id: string | null;
+  actor_username: string | null;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  target_label: string | null;
+  result: "success" | "failure";
+  source_ip: string | null;
+  error_code: string | null;
+  created_at: string;
+}
+
+export interface AuditLogPage {
+  items: AuditLog[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
 export interface ApiErrorBody {
   code: string;
   message: string;

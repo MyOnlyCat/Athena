@@ -8,6 +8,7 @@ from app.core.errors import AppError
 from app.models.registration import AccessNode
 from app.schemas.heartbeat import ConnectivityStatus
 from app.schemas.node import ManagementStatus, MutableManagementStatus
+from app.services.audit import AuditedAction, commit_with_audit
 from app.services.crypto import CredentialCipher, node_token_fingerprint
 from app.services.node_status import connectivity_filters
 
@@ -90,12 +91,15 @@ class AccessNodeManagementService:
         display_name: str | None,
         notes: str | None,
         management_tags: list[str],
+        audit: AuditedAction | None = None,
     ) -> AccessNode:
         node = await self._get(node_id)
+        if audit is not None:
+            audit.set_target(node.node_id, node.effective_name)
         node.display_name = display_name
         node.notes = notes
         node.management_tags = management_tags
-        await self.session.commit()
+        await commit_with_audit(self.session, audit)
         await self.session.refresh(node)
         return node
 
@@ -105,16 +109,26 @@ class AccessNodeManagementService:
         *,
         management_status: MutableManagementStatus,
         reason: str | None,
+        audit: AuditedAction | None = None,
     ) -> AccessNode:
         node = await self._get(node_id)
+        if audit is not None:
+            audit.set_target(node.node_id, node.effective_name)
         node.management_status = management_status
         node.disable_reason = reason if management_status == "disabled" else None
-        await self.session.commit()
+        await commit_with_audit(self.session, audit)
         await self.session.refresh(node)
         return node
 
-    async def rotate_token(self, node_id: str, token: str) -> AccessNode:
+    async def rotate_token(
+        self,
+        node_id: str,
+        token: str,
+        audit: AuditedAction | None = None,
+    ) -> AccessNode:
         node = await self._get(node_id)
+        if audit is not None:
+            audit.set_target(node.node_id, node.effective_name)
         fingerprint = node_token_fingerprint(self.credential_key, token)
         if node.token_fingerprint == fingerprint:
             raise AppError(
@@ -137,7 +151,7 @@ class AccessNodeManagementService:
         node.encrypted_token = self.cipher.encrypt(token)
         node.token_fingerprint = fingerprint
         try:
-            await self.session.commit()
+            await commit_with_audit(self.session, audit)
         except IntegrityError:
             await self.session.rollback()
             raise AppError(

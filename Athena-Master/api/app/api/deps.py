@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.models.user import User
+from app.services.audit import AuditService
 from app.services.auth import AuthService
 
 bearer = HTTPBearer(auto_error=False)
@@ -30,6 +31,13 @@ def get_auth_service(request: Request, session: SessionDep) -> AuthService:
 
 
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+
+
+def get_audit_service(session: SessionDep) -> AuditService:
+    return AuditService(session)
+
+
+AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
 
 
 async def get_auth_context(

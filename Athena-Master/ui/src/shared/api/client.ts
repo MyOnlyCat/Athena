@@ -4,6 +4,7 @@ import type {
   AccessNode,
   AccessNodePage,
   ApiErrorBody,
+  AuditLogPage,
   HostAssetListParams,
   HostAssetPage,
   NodeManagementInfoInput,
@@ -71,6 +72,16 @@ export const administratorsApi = {
   },
   async resetPassword(id: string, password: string) {
     await api.post(`/administrators/${id}/reset-password`, { password });
+  }
+};
+
+export const auditApi = {
+  async list(page: number, pageSize: number) {
+    return (
+      await api.get<AuditLogPage>("/audit-logs", {
+        params: { page, page_size: pageSize }
+      })
+    ).data;
   }
 };
 

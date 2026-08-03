@@ -43,7 +43,12 @@ def upgrade() -> None:
         sa.Column("reported_name", sa.String(length=100), nullable=False),
         sa.Column("hostname", sa.String(length=255), nullable=False),
         sa.Column("software_version", sa.String(length=64), nullable=False),
-        sa.Column("management_status", sa.String(length=20), server_default="active", nullable=False),
+        sa.Column(
+            "management_status",
+            sa.String(length=20),
+            server_default="active",
+            nullable=False,
+        ),
         sa.Column("encrypted_token", sa.String(length=512), nullable=False),
         sa.Column("approved_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("node_id"),

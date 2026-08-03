@@ -10,6 +10,7 @@ from sqlalchemy import text
 from starlette.exceptions import HTTPException
 
 from app.api.v1.administrators import router as administrators_router
+from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.nodes import admin_router as nodes_admin_router
 from app.api.v1.nodes import node_router as nodes_node_router
@@ -109,6 +110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         validation_error_handler,  # type: ignore[arg-type]
     )
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(audit_router, prefix="/api/v1")
     app.include_router(administrators_router, prefix="/api/v1")
     app.include_router(registration_admin_router, prefix="/api/v1")
     app.include_router(registration_node_router, prefix="/api/node/v1")
