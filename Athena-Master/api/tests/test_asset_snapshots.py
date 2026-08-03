@@ -135,6 +135,7 @@ async def test_complete_heartbeat_snapshot_is_visible_through_admin_asset_api(
                 "last_tested_at": "2026-08-01T07:59:00Z",
                 "lifecycle_status": "active",
                 "retired_at": None,
+                "source_node_connectivity_status": "online",
             }
         ],
         "page": 1,

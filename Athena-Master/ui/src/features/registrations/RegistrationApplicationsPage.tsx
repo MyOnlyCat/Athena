@@ -42,9 +42,10 @@ export function RegistrationApplicationsPage() {
       form.resetFields();
       setApprovalTarget(null);
       message.success("注册申请已批准");
-      await queryClient.invalidateQueries({
-        queryKey: ["registration-applications"]
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["registration-applications"] }),
+        queryClient.invalidateQueries({ queryKey: ["overview"] })
+      ]);
     },
     onError: (error) => message.error(apiMessage(error))
   });
@@ -55,7 +56,10 @@ export function RegistrationApplicationsPage() {
       rejectionForm.resetFields();
       setRejectionTarget(null);
       message.success("注册申请已拒绝");
-      await queryClient.invalidateQueries({ queryKey: ["registration-applications"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["registration-applications"] }),
+        queryClient.invalidateQueries({ queryKey: ["overview"] })
+      ]);
     },
     onError: (error) => message.error(apiMessage(error))
   });
@@ -63,7 +67,10 @@ export function RegistrationApplicationsPage() {
     mutationFn: (id: string) => registrationApplicationsApi.restore(id),
     onSuccess: async () => {
       message.success("注册申请已恢复，Node 可手动重新提交");
-      await queryClient.invalidateQueries({ queryKey: ["registration-applications"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["registration-applications"] }),
+        queryClient.invalidateQueries({ queryKey: ["overview"] })
+      ]);
     },
     onError: (error) => message.error(apiMessage(error))
   });

@@ -13,6 +13,7 @@ from app.api.v1.administrators import router as administrators_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.nodes import admin_router as nodes_admin_router
 from app.api.v1.nodes import node_router as nodes_node_router
+from app.api.v1.overview import router as overview_router
 from app.api.v1.registration_applications import (
     admin_router as registration_admin_router,
 )
@@ -113,6 +114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(registration_node_router, prefix="/api/node/v1")
     app.include_router(nodes_admin_router, prefix="/api/v1")
     app.include_router(nodes_node_router, prefix="/api/node/v1")
+    app.include_router(overview_router, prefix="/api/v1")
 
     @app.get("/api/v1/health")
     async def health() -> dict[str, str]:

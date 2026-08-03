@@ -7,6 +7,8 @@ from app.core.errors import AppError
 from app.models.asset import HostAsset
 from app.models.registration import AccessNode
 from app.schemas.asset import AssetLifecycleStatus, HeartbeatHost, HostDetectionFilter
+from app.schemas.heartbeat import ConnectivityStatus
+from app.services.node_status import connectivity_status
 
 MAX_ACTIVE_ASSETS = 10_000
 
@@ -75,8 +77,10 @@ class HostAssetQueryService:
         lifecycle_status: AssetLifecycleStatus | None,
         detection_status: HostDetectionFilter | None,
         tag: str | None,
-    ) -> tuple[list[HostAsset], int]:
-        if await self.session.get(AccessNode, node_id) is None:
+        now: datetime,
+    ) -> tuple[list[HostAsset], int, ConnectivityStatus]:
+        node = await self.session.get(AccessNode, node_id)
+        if node is None:
             raise AppError("NODE_NOT_FOUND", "接入节点不存在", status_code=404)
 
         filters = [HostAsset.node_id == node_id]
@@ -110,4 +114,4 @@ class HostAssetQueryService:
                 )
             ).all()
         )
-        return assets, total
+        return assets, total, connectivity_status(node.last_heartbeat_at, now)

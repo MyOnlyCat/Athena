@@ -8,6 +8,7 @@ import type {
   HostAssetPage,
   NodeManagementInfoInput,
   NodeListParams,
+  Overview,
   RegistrationApplicationPage,
   User,
   UserPage
@@ -70,6 +71,12 @@ export const administratorsApi = {
   },
   async resetPassword(id: string, password: string) {
     await api.post(`/administrators/${id}/reset-password`, { password });
+  }
+};
+
+export const overviewApi = {
+  async get() {
+    return (await api.get<Overview>("/overview")).data;
   }
 };
 
