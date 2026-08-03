@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -9,7 +9,7 @@ from app.models.registration import AccessNode
 from app.schemas.heartbeat import ConnectivityStatus
 from app.schemas.node import ManagementStatus, MutableManagementStatus
 from app.services.crypto import CredentialCipher, node_token_fingerprint
-from app.services.node_status import ONLINE_WINDOW_SECONDS, STALE_WINDOW_SECONDS
+from app.services.node_status import connectivity_filters
 
 
 class AccessNodeQueryService:
@@ -45,24 +45,7 @@ class AccessNodeQueryService:
         if management_status is not None:
             conditions.append(AccessNode.management_status == management_status)
         if requested_connectivity is not None:
-            online_cutoff = now - timedelta(seconds=ONLINE_WINDOW_SECONDS)
-            offline_cutoff = now - timedelta(seconds=STALE_WINDOW_SECONDS)
-            if requested_connectivity == "online":
-                conditions.append(AccessNode.last_heartbeat_at > online_cutoff)
-            elif requested_connectivity == "stale":
-                conditions.extend(
-                    (
-                        AccessNode.last_heartbeat_at <= online_cutoff,
-                        AccessNode.last_heartbeat_at >= offline_cutoff,
-                    )
-                )
-            else:
-                conditions.append(
-                    or_(
-                        AccessNode.last_heartbeat_at.is_(None),
-                        AccessNode.last_heartbeat_at < offline_cutoff,
-                    )
-                )
+            conditions.append(connectivity_filters(now)[requested_connectivity])
         if conditions:
             query = query.where(*conditions)
             count_query = count_query.where(*conditions)

@@ -1,8 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Form, Input, Modal, Select, Space, Table, Tag } from "antd";
 import { useEffect, useState } from "react";
 
 import { apiMessage, nodesApi } from "../../shared/api/client";
+import {
+  OVERVIEW_QUERY_KEY,
+  STATUS_REFRESH_INTERVAL_MS
+} from "../../shared/api/queryPolicy";
 import type {
   AccessNode,
   AssetLifecycleStatus,
@@ -70,6 +74,7 @@ function pageAfterPaginationChange(
 }
 
 export function NodesPage() {
+  const queryClient = useQueryClient();
   const [managementForm] = Form.useForm<ManagementInfoForm>();
   const [disableForm] = Form.useForm<DisableForm>();
   const [tokenForm] = Form.useForm<TokenForm>();
@@ -111,7 +116,8 @@ export function NodesPage() {
   };
   const query = useQuery({
     queryKey: ["nodes", params],
-    queryFn: () => nodesApi.list(params)
+    queryFn: () => nodesApi.list(params),
+    refetchInterval: STATUS_REFRESH_INTERVAL_MS
   });
   useEffect(() => {
     const nodes = query.data?.items ?? [];
@@ -131,14 +137,19 @@ export function NodesPage() {
   const assetsQuery = useQuery({
     queryKey: ["node-assets", selectedNodeId, assetParams],
     queryFn: () => nodesApi.listAssets(selectedNodeId!, assetParams),
-    enabled: Boolean(selectedNodeId)
+    enabled: Boolean(selectedNodeId),
+    refetchInterval: STATUS_REFRESH_INTERVAL_MS
   });
   const selectedNode = query.data?.items.find((node) => node.node_id === selectedNodeId);
   const browserTimeZone =
     Intl.DateTimeFormat().resolvedOptions().timeZone || "浏览器本地时区";
 
   async function refreshNodeState() {
-    await Promise.all([query.refetch(), assetsQuery.refetch()]);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY }),
+      query.refetch(),
+      assetsQuery.refetch()
+    ]);
   }
 
   function openManagement() {
@@ -528,11 +539,33 @@ export function NodesPage() {
                 title: "检测状态",
                 render: (_, asset) => (
                   <Space direction="vertical" size={0}>
-                    <Tag color={asset.last_test_status === "success" ? "success" : "warning"}>
-                      {asset.last_test_status
-                        ? HOST_STATUS_LABELS[asset.last_test_status]
-                        : "尚未检测"}
+                    <Tag
+                      color={
+                        asset.source_node_connectivity_status === "offline"
+                          ? "default"
+                          : asset.source_node_connectivity_status === "stale"
+                            ? "warning"
+                            : asset.last_test_status === "success"
+                              ? "success"
+                              : "warning"
+                      }
+                    >
+                      {asset.source_node_connectivity_status === "offline"
+                        ? "状态未知（来源节点离线）"
+                        : asset.source_node_connectivity_status === "stale"
+                          ? "数据延迟（来源节点心跳延迟）"
+                          : asset.last_test_status
+                            ? HOST_STATUS_LABELS[asset.last_test_status]
+                            : "尚未检测"}
                     </Tag>
+                    {asset.source_node_connectivity_status !== "online" ? (
+                      <span className="muted">
+                        最后检测：
+                        {asset.last_test_status
+                          ? HOST_STATUS_LABELS[asset.last_test_status]
+                          : "尚未检测"}
+                      </span>
+                    ) : null}
                     <span className="muted">{asset.last_test_code ?? "无错误码"}</span>
                     <span className="muted">{formatLocalTime(asset.last_tested_at)}</span>
                   </Space>

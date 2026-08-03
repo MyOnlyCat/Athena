@@ -111,6 +111,7 @@ class HostAssetItem(BaseModel):
     last_tested_at: datetime | None
     lifecycle_status: AssetLifecycleStatus
     retired_at: datetime | None
+    source_node_connectivity_status: Literal["online", "stale", "offline"]
 
     @field_validator("last_tested_at", "retired_at")
     @classmethod

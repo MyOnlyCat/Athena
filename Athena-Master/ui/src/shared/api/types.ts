@@ -18,6 +18,24 @@ export interface ApiErrorBody {
   message: string;
 }
 
+export interface Overview {
+  nodes: {
+    total: number;
+    pending: number;
+    active: number;
+    disabled: number;
+    rejected: number;
+    online: number;
+    stale: number;
+    offline: number;
+  };
+  assets: {
+    active: number;
+    abnormal: number;
+    unknown: number;
+  };
+}
+
 export interface RegistrationApplication {
   id: string;
   node_id: string;
@@ -111,6 +129,7 @@ export interface HostAsset {
   last_tested_at: string | null;
   lifecycle_status: AssetLifecycleStatus;
   retired_at: string | null;
+  source_node_connectivity_status: ConnectivityStatus;
 }
 
 export interface HostAssetPage {

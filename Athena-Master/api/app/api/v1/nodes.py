@@ -216,7 +216,10 @@ async def list_node_assets(
     detection_status: Annotated[HostDetectionFilter | None, Query()] = None,
     tag: Annotated[str | None, Query(max_length=32)] = None,
 ) -> HostAssetPage:
-    assets, total = await HostAssetQueryService(session).list_page(
+    now = datetime.now(UTC)
+    assets, total, source_node_connectivity_status = await HostAssetQueryService(
+        session
+    ).list_page(
         node_id=node_id,
         page=page,
         page_size=page_size,
@@ -224,6 +227,7 @@ async def list_node_assets(
         lifecycle_status=lifecycle_status,
         detection_status=detection_status,
         tag=tag,
+        now=now,
     )
     return HostAssetPage(
         items=[
@@ -241,6 +245,7 @@ async def list_node_assets(
                 last_tested_at=asset.last_tested_at,
                 lifecycle_status="retired" if asset.retired_at else "active",
                 retired_at=asset.retired_at,
+                source_node_connectivity_status=source_node_connectivity_status,
             )
             for asset in assets
         ],

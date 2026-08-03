@@ -22,13 +22,14 @@ function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } }
   });
-  return render(
+  const view = render(
     <App>
       <QueryClientProvider client={queryClient}>
         <NodesPage />
       </QueryClientProvider>
     </App>
   );
+  return { ...view, queryClient };
 }
 
 beforeEach(() => {
@@ -70,7 +71,8 @@ beforeEach(() => {
         last_test_code: "SSH_TIMEOUT",
         last_tested_at: "2026-07-31T08:59:00Z",
         lifecycle_status: "active",
-        retired_at: null
+        retired_at: null,
+        source_node_connectivity_status: "online"
       }
     ],
     page: 1,
@@ -109,6 +111,67 @@ test("shows reported identity, management state, connectivity and last heartbeat
   expect(screen.getByText(/浏览器时区：/)).toBeInTheDocument();
 });
 
+test("shows delayed and unknown asset state without hiding the last test details", async () => {
+  apiMocks.listAssets
+    .mockResolvedValueOnce({
+      items: [
+        {
+          node_id: "019d3a7e-7c42-7000-8000-000000000007",
+          host_id: "019fae08-0ab1-7da1-9d22-612a0c5bb9ed",
+          name: "stale-web",
+          address: "10.0.0.10",
+          port: 22,
+          username: "root",
+          tags: [],
+          is_local: false,
+          last_test_status: "failed",
+          last_test_code: "SSH_TIMEOUT",
+          last_tested_at: "2026-07-31T08:59:00Z",
+          lifecycle_status: "active",
+          retired_at: null,
+          source_node_connectivity_status: "stale"
+        }
+      ],
+      page: 1,
+      page_size: 20,
+      total: 1
+    })
+    .mockResolvedValueOnce({
+      items: [
+        {
+          node_id: "019d3a7e-7c42-7000-8000-000000000007",
+          host_id: "019fae08-0ab1-7da1-9d22-612a0c5bb9ed",
+          name: "offline-web",
+          address: "10.0.0.10",
+          port: 22,
+          username: "root",
+          tags: [],
+          is_local: false,
+          last_test_status: "success",
+          last_test_code: "SSH_CONNECTED",
+          last_tested_at: "2026-07-31T08:59:00Z",
+          lifecycle_status: "active",
+          retired_at: null,
+          source_node_connectivity_status: "offline"
+        }
+      ],
+      page: 1,
+      page_size: 20,
+      total: 1
+    });
+  const { unmount } = renderPage();
+
+  expect(await screen.findByText("数据延迟（来源节点心跳延迟）")).toBeInTheDocument();
+  expect(screen.getByText("最后检测：连接失败")).toBeInTheDocument();
+  expect(screen.getByText("SSH_TIMEOUT")).toBeInTheDocument();
+
+  unmount();
+  renderPage();
+  expect(await screen.findByText("状态未知（来源节点离线）")).toBeInTheDocument();
+  expect(screen.getByText("最后检测：连接正常")).toBeInTheDocument();
+  expect(screen.getByText("SSH_CONNECTED")).toBeInTheDocument();
+});
+
 test("updates administrator-owned node information without changing reported identity", async () => {
   const user = userEvent.setup();
   renderPage();
@@ -135,7 +198,8 @@ test("updates administrator-owned node information without changing reported ide
 
 test("disables a node with an optional reason and refreshes the list", async () => {
   const user = userEvent.setup();
-  renderPage();
+  const { queryClient } = renderPage();
+  queryClient.setQueryData(["overview"], { cached: true });
   await screen.findByRole("heading", { name: "上海生产节点" });
 
   await user.click(screen.getByRole("button", { name: "禁用节点" }));
@@ -151,6 +215,7 @@ test("disables a node with an optional reason and refreshes the list", async () 
     )
   );
   await waitFor(() => expect(apiMocks.list).toHaveBeenCalledTimes(2));
+  expect(queryClient.getQueryState(["overview"])?.isInvalidated).toBe(true);
 });
 
 test("reenables a disabled node", async () => {

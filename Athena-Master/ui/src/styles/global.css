@@ -212,6 +212,16 @@ button, input { font: inherit; }
 .foundation-card .anticon { color: #6f99ff; font-size: 32px; }
 .foundation-card h2 { margin: 0 0 6px; }
 .foundation-card p { margin: 0; color: var(--text-secondary); }
+.overview-section h2 { margin: 0 0 14px; font-size: 18px; }
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 16px;
+}
+.overview-grid-compact { grid-template-columns: repeat(3, minmax(180px, 1fr)); }
+.overview-grid .ant-card { border-color: var(--border-soft); background: var(--panel-bg); }
+.overview-grid .ant-statistic-title { color: var(--text-secondary); }
+.overview-grid .ant-statistic-content { color: var(--text-primary); }
 .empty-page { display: grid; min-height: 60vh; text-align: center; place-content: center; }
 .empty-page h1 { margin: 0 0 10px; font-size: 38px; }
 .empty-page p { max-width: 480px; }
@@ -228,10 +238,14 @@ button, input { font: inherit; }
 @media (max-width: 1050px) {
   .login-page { grid-template-columns: 1fr; }
   .login-brand { display: none; }
+  .overview-grid,
+  .overview-grid-compact { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
 }
 @media (max-width: 760px) {
   .app-sider { display: none; }
   .app-sider + .ant-layout { margin-left: 0; }
   .app-content { padding: 20px; }
   .page-header-split { align-items: stretch; flex-direction: column; }
+  .overview-grid,
+  .overview-grid-compact { grid-template-columns: 1fr; }
 }
