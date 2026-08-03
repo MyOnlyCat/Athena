@@ -52,8 +52,8 @@ const HOST_STATUS_LABELS: Record<HostTestStatus, string> = {
   pending_trust: "待确认指纹"
 };
 
-function formatLocalTime(value: string | null): string {
-  if (!value) return "尚未收到心跳";
+function formatLocalTime(value: string | null, emptyLabel = "尚未收到心跳"): string {
+  if (!value) return emptyLabel;
   return new Intl.DateTimeFormat("zh-CN", {
     year: "numeric",
     month: "2-digit",
@@ -99,6 +99,10 @@ export function NodesPage() {
   const [assetDetection, setAssetDetection] = useState<HostDetectionFilter>();
   const [assetTagInput, setAssetTagInput] = useState("");
   const [assetTag, setAssetTag] = useState("");
+  const [assetSortBy, setAssetSortBy] =
+    useState<HostAssetListParams["sort_by"]>("name");
+  const [assetSortOrder, setAssetSortOrder] =
+    useState<HostAssetListParams["sort_order"]>("asc");
   const [managementOpen, setManagementOpen] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
   const [tokenOpen, setTokenOpen] = useState(false);
@@ -120,8 +124,12 @@ export function NodesPage() {
     refetchInterval: STATUS_REFRESH_INTERVAL_MS
   });
   useEffect(() => {
-    const nodes = query.data?.items ?? [];
-    if (nodes.length > 0 && !nodes.some((node) => node.node_id === selectedNodeId)) {
+    const nodes = query.data?.items;
+    if (!nodes) return;
+    if (nodes.length === 0) {
+      setSelectedNodeId(undefined);
+      setAssetPage(1);
+    } else if (!nodes.some((node) => node.node_id === selectedNodeId)) {
       setSelectedNodeId(nodes[0].node_id);
       setAssetPage(1);
     }
@@ -129,6 +137,8 @@ export function NodesPage() {
   const assetParams: HostAssetListParams = {
     page: assetPage,
     page_size: assetPageSize,
+    sort_by: assetSortBy,
+    sort_order: assetSortOrder,
     ...(assetSearch ? { search: assetSearch } : {}),
     ...(assetLifecycle ? { lifecycle_status: assetLifecycle } : {}),
     ...(assetDetection ? { detection_status: assetDetection } : {}),
@@ -245,198 +255,229 @@ export function NodesPage() {
           <p className="muted">浏览器时区：{browserTimeZone}</p>
         </div>
       </header>
-      <section className="content-card">
-        <Space wrap className="table-toolbar">
-          <Input.Search
-            placeholder="搜索名称、主机名、版本或节点 ID"
-            value={searchInput}
-            allowClear
-            onChange={(event) => setSearchInput(event.target.value)}
-            onSearch={(value) => {
-              setSearch(value.trim());
-              setPage(1);
+      <section className="content-card nodes-workspace">
+        <section className="node-list-pane" aria-label="接入节点列表">
+          <div className="pane-heading">
+            <div>
+              <h2>节点列表</h2>
+              <p className="muted">选择节点以查看详情和资产</p>
+            </div>
+          </div>
+          <div className="node-filter-grid">
+            <Input.Search
+              className="node-search-control"
+              placeholder="搜索名称、主机名、版本或节点 ID"
+              value={searchInput}
+              allowClear
+              onChange={(event) => setSearchInput(event.target.value)}
+              onSearch={(value) => {
+                setSearch(value.trim());
+                setPage(1);
+              }}
+            />
+            <Select
+              aria-label="管理状态"
+              placeholder="管理状态"
+              allowClear
+              value={managementStatus}
+              onChange={(value) => {
+                setManagementStatus(value);
+                setPage(1);
+              }}
+              options={[
+                { value: "active", label: "已启用" },
+                { value: "disabled", label: "已禁用" },
+                { value: "rejected", label: "已拒绝" },
+                { value: "pending", label: "待审批" }
+              ]}
+            />
+            <Select
+              aria-label="连接状态"
+              placeholder="连接状态"
+              allowClear
+              value={connectivityStatus}
+              onChange={(value) => {
+                setConnectivityStatus(value);
+                setPage(1);
+              }}
+              options={[
+                { value: "online", label: "在线" },
+                { value: "stale", label: "心跳延迟" },
+                { value: "offline", label: "离线" }
+              ]}
+            />
+            <Select
+              aria-label="排序字段"
+              value={sortBy}
+              onChange={(value) => {
+                setSortBy(value);
+                setPage(1);
+              }}
+              options={[
+                { value: "last_heartbeat_at", label: "最后心跳" },
+                { value: "reported_name", label: "上报名" },
+                { value: "hostname", label: "主机名" },
+                { value: "software_version", label: "软件版本" },
+                { value: "approved_at", label: "批准时间" }
+              ]}
+            />
+            <Select
+              aria-label="排序方向"
+              value={sortOrder}
+              onChange={(value) => {
+                setSortOrder(value);
+                setPage(1);
+              }}
+              options={[
+                { value: "desc", label: "降序" },
+                { value: "asc", label: "升序" }
+              ]}
+            />
+          </div>
+          <Table<ListedAccessNode>
+            className="compact-node-table"
+            rowKey="node_id"
+            dataSource={query.data?.items ?? []}
+            loading={query.isLoading}
+            showHeader={false}
+            size="small"
+            tableLayout="fixed"
+            rowSelection={{
+              type: "radio",
+              selectedRowKeys: selectedNodeId ? [selectedNodeId] : [],
+              onChange: (keys) => {
+                setSelectedNodeId(String(keys[0]));
+                setAssetPage(1);
+              }
             }}
-            style={{ width: 320 }}
-          />
-          <Select
-            aria-label="管理状态"
-            placeholder="管理状态"
-            allowClear
-            value={managementStatus}
-            onChange={(value) => {
-              setManagementStatus(value);
-              setPage(1);
+            onRow={(node) => ({
+              onClick: () => {
+                setSelectedNodeId(node.node_id);
+                setAssetPage(1);
+              }
+            })}
+            pagination={{
+              current: query.data?.page ?? page,
+              pageSize: query.data?.page_size ?? pageSize,
+              total: query.data?.total ?? 0,
+              size: "small",
+              showSizeChanger: true,
+              showTotal: (total) => `共 ${total} 个接入节点`,
+              onChange: (nextPage, nextPageSize) => {
+                setPage(pageAfterPaginationChange(nextPage, nextPageSize, pageSize));
+                setPageSize(nextPageSize);
+              }
             }}
-            options={[
-              { value: "active", label: "已启用" },
-              { value: "disabled", label: "已禁用" },
-              { value: "rejected", label: "已拒绝" },
-              { value: "pending", label: "待审批" }
+            columns={[
+              {
+                title: "接入节点",
+                render: (_, node) => (
+                  <Space direction="vertical" size={2} className="compact-node-summary">
+                    <span className="primary-cell">{node.effective_name}</span>
+                    <span className="muted">Node 上报名：{node.reported_name}</span>
+                    <span className="muted mono">{node.node_id}</span>
+                    <span className="muted">
+                      最近心跳：{formatLocalTime(node.last_heartbeat_at)}
+                    </span>
+                  </Space>
+                )
+              }
             ]}
-            style={{ width: 132 }}
           />
-          <Select
-            aria-label="连接状态"
-            placeholder="连接状态"
-            allowClear
-            value={connectivityStatus}
-            onChange={(value) => {
-              setConnectivityStatus(value);
-              setPage(1);
-            }}
-            options={[
-              { value: "online", label: "在线" },
-              { value: "stale", label: "心跳延迟" },
-              { value: "offline", label: "离线" }
-            ]}
-            style={{ width: 132 }}
-          />
-          <Select
-            aria-label="排序字段"
-            value={sortBy}
-            onChange={(value) => {
-              setSortBy(value);
-              setPage(1);
-            }}
-            options={[
-              { value: "last_heartbeat_at", label: "最后心跳" },
-              { value: "reported_name", label: "上报名" },
-              { value: "hostname", label: "主机名" },
-              { value: "software_version", label: "软件版本" },
-              { value: "approved_at", label: "批准时间" }
-            ]}
-            style={{ width: 132 }}
-          />
-          <Select
-            aria-label="排序方向"
-            value={sortOrder}
-            onChange={(value) => {
-              setSortOrder(value);
-              setPage(1);
-            }}
-            options={[
-              { value: "desc", label: "降序" },
-              { value: "asc", label: "升序" }
-            ]}
-            style={{ width: 100 }}
-          />
-        </Space>
-        <Table<ListedAccessNode>
-          rowKey="node_id"
-          dataSource={query.data?.items ?? []}
-          loading={query.isLoading}
-          rowSelection={{
-            type: "radio",
-            selectedRowKeys: selectedNodeId ? [selectedNodeId] : [],
-            onChange: (keys) => {
-              setSelectedNodeId(String(keys[0]));
-              setAssetPage(1);
-            }
-          }}
-          pagination={{
-            current: query.data?.page ?? page,
-            pageSize: query.data?.page_size ?? pageSize,
-            total: query.data?.total ?? 0,
-            showSizeChanger: true,
-            showTotal: (total) => `共 ${total} 个接入节点`,
-            onChange: (nextPage, nextPageSize) => {
-              setPage(pageAfterPaginationChange(nextPage, nextPageSize, pageSize));
-              setPageSize(nextPageSize);
-            }
-          }}
-          columns={[
-            {
-              title: "接入节点",
-              render: (_, node) => (
-                <Space direction="vertical" size={0}>
-                  <span className="primary-cell">{node.effective_name}</span>
-                  <span className="muted">Node 上报名：{node.reported_name}</span>
-                  <span className="muted">{node.node_id}</span>
+        </section>
+        <section className="node-detail-pane" aria-label="节点详情与主机资产">
+          {operationError ? <Alert type="error" message={operationError} showIcon /> : null}
+          {selectedNode ? (
+            <section className="node-detail-card" aria-label="节点管理">
+              <header className="node-detail-header">
+                <div>
+                  <h2>{selectedNode.effective_name}</h2>
+                  <span className="muted mono">{selectedNode.node_id}</span>
+                </div>
+                <Space wrap>
+                  <Button onClick={openManagement}>编辑管理信息</Button>
+                  {selectedNode.management_status === "disabled" ? (
+                    <Button loading={operationPending} onClick={() => void enableNode()}>
+                      启用节点
+                    </Button>
+                  ) : (
+                    <Button
+                      danger
+                      onClick={() => {
+                        setOperationError(undefined);
+                        setDisableOpen(true);
+                      }}
+                    >
+                      禁用节点
+                    </Button>
+                  )}
+                  <Button
+                    onClick={() => {
+                      tokenForm.resetFields();
+                      setOperationError(undefined);
+                      setTokenOpen(true);
+                    }}
+                  >
+                    更换 Token
+                  </Button>
                 </Space>
-              )
-            },
-            {
-              title: "上报环境",
-              render: (_, node) => (
-                <Space direction="vertical" size={0}>
-                  <span>{node.hostname}</span>
-                  <span className="muted">版本 {node.software_version}</span>
-                </Space>
-              )
-            },
-            {
-              title: "管理状态",
-              render: (_, node) => (
-                <Tag color={node.management_status === "active" ? "success" : "default"}>
-                  {MANAGEMENT_LABELS[node.management_status]}
-                </Tag>
-              )
-            },
-            {
-              title: "连接状态",
-              render: (_, node) => (
-                <Tag
-                  color={
-                    node.connectivity_status === "online"
-                      ? "success"
-                      : node.connectivity_status === "stale"
-                        ? "warning"
-                        : "error"
-                  }
-                >
-                  {CONNECTIVITY_LABELS[node.connectivity_status]}
-                </Tag>
-              )
-            },
-            {
-              title: "最后心跳",
-              render: (_, node) => formatLocalTime(node.last_heartbeat_at)
-            }
-          ]}
-        />
-        {operationError ? <Alert type="error" message={operationError} showIcon /> : null}
-        {selectedNode ? (
-          <section className="asset-section" aria-label="节点管理">
-            <Space direction="vertical" size={4}>
-              <h2>{selectedNode.effective_name}</h2>
-              <span>Node 上报名：{selectedNode.reported_name}</span>
-              <span className="muted">{selectedNode.notes || "暂无管理备注"}</span>
-              <span>
-                {selectedNode.management_tags.map((tag) => (
-                  <Tag key={tag}>{tag}</Tag>
-                ))}
-              </span>
-            </Space>
-            <Space wrap>
-              <Button onClick={openManagement}>编辑管理信息</Button>
-              {selectedNode.management_status === "disabled" ? (
-                <Button loading={operationPending} onClick={() => void enableNode()}>
-                  启用节点
-                </Button>
-              ) : (
-                <Button
-                  danger
-                  onClick={() => {
-                    setOperationError(undefined);
-                    setDisableOpen(true);
-                  }}
-                >
-                  禁用节点
-                </Button>
-              )}
-              <Button
-                onClick={() => {
-                  tokenForm.resetFields();
-                  setOperationError(undefined);
-                  setTokenOpen(true);
-                }}
-              >
-                更换 Token
-              </Button>
-            </Space>
-          </section>
-        ) : null}
-        <div className="asset-section">
+              </header>
+              <div className="node-detail-grid">
+                <div>
+                  <span className="detail-label">上报身份</span>
+                  <span>Node 上报名：{selectedNode.reported_name}</span>
+                </div>
+                <div>
+                  <span className="detail-label">主机名</span>
+                  <strong>{selectedNode.hostname}</strong>
+                </div>
+                <div>
+                  <span className="detail-label">软件版本</span>
+                  <span>版本 {selectedNode.software_version}</span>
+                </div>
+                <div>
+                  <span className="detail-label">管理状态</span>
+                  <Tag
+                    color={selectedNode.management_status === "active" ? "success" : "default"}
+                  >
+                    {MANAGEMENT_LABELS[selectedNode.management_status]}
+                  </Tag>
+                </div>
+                <div>
+                  <span className="detail-label">连接状态</span>
+                  <Tag
+                    color={
+                      selectedNode.connectivity_status === "online"
+                        ? "success"
+                        : selectedNode.connectivity_status === "stale"
+                          ? "warning"
+                          : "error"
+                    }
+                  >
+                    {CONNECTIVITY_LABELS[selectedNode.connectivity_status]}
+                  </Tag>
+                </div>
+                <div>
+                  <span className="detail-label">最后心跳</span>
+                  <span>{formatLocalTime(selectedNode.last_heartbeat_at)}</span>
+                </div>
+              </div>
+              <div className="node-management-notes">
+                <span className="detail-label">管理备注与标签</span>
+                <p>{selectedNode.notes || "暂无管理备注"}</p>
+                <div>
+                  {selectedNode.management_tags.length > 0 ? (
+                    selectedNode.management_tags.map((tag) => <Tag key={tag}>{tag}</Tag>)
+                  ) : (
+                    <span className="muted">暂无管理标签</span>
+                  )}
+                </div>
+              </div>
+            </section>
+          ) : (
+            <Alert type="info" message="请选择一个接入节点查看详情" showIcon />
+          )}
+          <div className="asset-section">
           <h2>主机资产</h2>
           <p className="muted">资产由所选接入节点的完整心跳快照维护，此页面只读。</p>
           <Space wrap className="table-toolbar">
@@ -493,6 +534,37 @@ export function NodesPage() {
                 { value: "untested", label: "尚未检测" }
               ]}
               style={{ width: 140 }}
+            />
+            <Select
+              aria-label="资产排序字段"
+              value={assetSortBy}
+              onChange={(value) => {
+                setAssetSortBy(value);
+                setAssetPage(1);
+              }}
+              options={[
+                { value: "name", label: "主机名称" },
+                { value: "address", label: "地址" },
+                { value: "port", label: "端口" },
+                { value: "username", label: "用户名" },
+                { value: "last_test_status", label: "最后检测状态" },
+                { value: "last_tested_at", label: "最后检测时间" },
+                { value: "retired_at", label: "退役时间" }
+              ]}
+              style={{ width: 150 }}
+            />
+            <Select
+              aria-label="资产排序方向"
+              value={assetSortOrder}
+              onChange={(value) => {
+                setAssetSortOrder(value);
+                setAssetPage(1);
+              }}
+              options={[
+                { value: "asc", label: "升序排列" },
+                { value: "desc", label: "降序排列" }
+              ]}
+              style={{ width: 120 }}
             />
           </Space>
           <Table<HostAsset>
@@ -567,7 +639,9 @@ export function NodesPage() {
                       </span>
                     ) : null}
                     <span className="muted">{asset.last_test_code ?? "无错误码"}</span>
-                    <span className="muted">{formatLocalTime(asset.last_tested_at)}</span>
+                    <span className="muted">
+                      {formatLocalTime(asset.last_tested_at, "尚未检测")}
+                    </span>
                   </Space>
                 )
               },
@@ -581,7 +655,8 @@ export function NodesPage() {
               }
             ]}
           />
-        </div>
+          </div>
+        </section>
       </section>
       <Modal
         title="编辑管理信息"

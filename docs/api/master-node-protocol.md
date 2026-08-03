@@ -196,6 +196,12 @@ GET 响应只用 `has_token` 表示 Token 是否存在，永不返回明文或�
 }
 ```
 
+Master 在认证、签名、防重放和限流前置检查之后，直接从已签名的原始 JSON 字节读取
+`protocol_version`。格式正确的非空字符串若不是 `v1`，即使同时携带 v1 不认识的未来
+字段，也统一返回 `426 NODE_PROTOCOL_UNSUPPORTED`；只有确认版本为 `v1` 后才执行
+禁止额外字段的严格 v1 模型校验。缺失、空值或非字符串版本返回
+`422 NODE_PAYLOAD_INVALID`。整个流程不重新序列化正文，也不改变签名输入。
+
 密码、密文和自由文本连接错误不会上报。`hosts` 是节点的完整当前清单。检测状态为
 `success`、`failed`、`pending_trust` 或 `null`；已检测主机必须同时携带标准
 `last_test_code` 和 UTC RFC 3339 `last_tested_at`，尚未检测时三者均为空。
@@ -273,12 +279,15 @@ Master 严格拒绝未知字段、重复 host ID、字符串形式端口、非�
 | `lifecycle_status` | `active`（在管）或 `retired`（已退役） |
 | `detection_status` | `success`、`failed`、`pending_trust` 或 `untested` |
 | `tag` | 按单个完整标签筛选 |
+| `sort_by` | `name`、`address`、`port`、`username`、`last_test_status`、`last_tested_at` 或 `retired_at`；默认 `name` |
+| `sort_order` | `asc` 或 `desc`；默认 `asc` |
 
 响应保留最后检测状态、标准错误码和检测时间；时间使用 UTC RFC 3339，页面按浏览器
 时区显示。每项资产还返回 `source_node_connectivity_status`：`online`、`stale` 或
 `offline`。页面对 `stale` 显示“数据延迟（来源节点心跳延迟）”，对 `offline` 显示
 “状态未知（来源节点离线）”，同时继续展示最后检测结果与时间。Master 页面不会编辑
-Node 上报的资产字段。
+Node 上报的资产字段。无论升序或降序，所选排序字段的空值都排在非空值之后；相同值
+再按 `host_id` 升序排列，保证跨页结果稳定。
 
 管理员通过 `GET /api/v1/overview` 获取健康概览。响应包含：
 

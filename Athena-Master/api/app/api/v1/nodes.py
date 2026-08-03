@@ -7,6 +7,8 @@ from app.api.deps import AuthenticatedAuditDep, CurrentUserDep, SessionDep
 from app.core.errors import AppError
 from app.schemas.asset import (
     AssetLifecycleStatus,
+    AssetSortField,
+    AssetSortOrder,
     HostAssetItem,
     HostAssetPage,
     HostDetectionFilter,
@@ -240,6 +242,8 @@ async def list_node_assets(
     lifecycle_status: Annotated[AssetLifecycleStatus | None, Query()] = None,
     detection_status: Annotated[HostDetectionFilter | None, Query()] = None,
     tag: Annotated[str | None, Query(max_length=32)] = None,
+    sort_by: Annotated[AssetSortField, Query()] = "name",
+    sort_order: Annotated[AssetSortOrder, Query()] = "asc",
 ) -> HostAssetPage:
     now = datetime.now(UTC)
     assets, total, source_node_connectivity_status = await HostAssetQueryService(
@@ -252,6 +256,8 @@ async def list_node_assets(
         lifecycle_status=lifecycle_status,
         detection_status=detection_status,
         tag=tag,
+        sort_by=sort_by,
+        sort_order=sort_order,
         now=now,
     )
     return HostAssetPage(

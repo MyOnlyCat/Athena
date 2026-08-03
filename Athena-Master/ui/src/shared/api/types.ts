@@ -186,4 +186,13 @@ export interface HostAssetListParams {
   lifecycle_status?: AssetLifecycleStatus;
   detection_status?: HostDetectionFilter;
   tag?: string;
+  sort_by:
+    | "name"
+    | "address"
+    | "port"
+    | "username"
+    | "last_test_status"
+    | "last_tested_at"
+    | "retired_at";
+  sort_order: "asc" | "desc";
 }

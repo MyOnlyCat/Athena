@@ -223,8 +223,38 @@ try {
     Wait-ForProbe -Name "Master UI" -Process $uiProcess -Probe {
         $page = Invoke-WebRequest -Uri $uiUrl -UseBasicParsing -TimeoutSec 2
         $proxiedHealth = Invoke-RestMethod -Uri "$uiUrl/api/v1/health" -TimeoutSec 2
+        $contentSecurityPolicy = [string]$page.Headers["Content-Security-Policy"]
+        $inlineScriptHashes = @(
+            [regex]::Matches($page.Content, '(?s)<script[^>]*>(.*?)</script>') |
+                ForEach-Object {
+                    $scriptContent = $_.Groups[1].Value
+                    if (-not [string]::IsNullOrWhiteSpace($scriptContent)) {
+                        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                        try {
+                            [Convert]::ToBase64String(
+                                $sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($scriptContent))
+                            )
+                        }
+                        finally {
+                            $sha256.Dispose()
+                        }
+                    }
+                }
+        )
+        $unapprovedInlineScripts = @(
+            $inlineScriptHashes |
+                Where-Object {
+                    -not $contentSecurityPolicy.Contains("'sha256-$($_)'")
+                }
+        )
         return (
             $page.StatusCode -eq 200 -and
+            $contentSecurityPolicy.Contains("script-src 'self'") -and
+            $contentSecurityPolicy.Contains("script-src-attr 'none'") -and
+            $contentSecurityPolicy.Contains("object-src 'none'") -and
+            $contentSecurityPolicy.Contains("frame-ancestors 'none'") -and
+            $inlineScriptHashes.Count -gt 0 -and
+            $unapprovedInlineScripts.Count -eq 0 -and
             $proxiedHealth.status -eq "ok" -and
             $proxiedHealth.service -eq "athena-master-api"
         )

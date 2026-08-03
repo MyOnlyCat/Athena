@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
@@ -160,18 +161,20 @@ class HeartbeatService:
                 status_code=429,
             )
 
+        protocol_version = self._parse_protocol_version(body)
+        if protocol_version != SUPPORTED_PROTOCOL_VERSION:
+            raise AppError(
+                "NODE_PROTOCOL_UNSUPPORTED",
+                "节点协议版本不受支持",
+                status_code=426,
+            )
+
         payload = self._parse_payload(body)
         if payload.node.id != node_id:
             raise AppError(
                 "NODE_PAYLOAD_INVALID",
                 "心跳负载中的节点身份不匹配",
                 status_code=422,
-            )
-        if payload.protocol_version != SUPPORTED_PROTOCOL_VERSION:
-            raise AppError(
-                "NODE_PROTOCOL_UNSUPPORTED",
-                "节点协议版本不受支持",
-                status_code=426,
             )
 
         await AssetSnapshotService(self.session).replace(
@@ -219,3 +222,28 @@ class HeartbeatService:
                 "心跳负载无效",
                 status_code=422,
             ) from None
+
+    @staticmethod
+    def _parse_protocol_version(body: bytes) -> str:
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, RecursionError, UnicodeDecodeError):
+            raise AppError(
+                "NODE_PAYLOAD_INVALID",
+                "心跳负载无效",
+                status_code=422,
+            ) from None
+        if not isinstance(data, dict):
+            raise AppError(
+                "NODE_PAYLOAD_INVALID",
+                "心跳负载无效",
+                status_code=422,
+            )
+        protocol_version = data.get("protocol_version")
+        if not isinstance(protocol_version, str) or not protocol_version:
+            raise AppError(
+                "NODE_PAYLOAD_INVALID",
+                "心跳负载无效",
+                status_code=422,
+            )
+        return protocol_version

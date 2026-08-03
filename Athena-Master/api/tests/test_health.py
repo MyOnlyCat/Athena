@@ -24,9 +24,21 @@ async def test_database_unavailability_uses_stable_temporary_error_contract(
     app: FastAPI,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    encrypted_token = "encrypted-token-ciphertext-do-not-log"
+    token_fingerprint = "token-fingerprint-do-not-log"
+
     @asynccontextmanager
     async def unavailable_session() -> AsyncIterator[None]:
-        raise OperationalError("SELECT 1", {}, OSError("database unavailable"))
+        raise OperationalError(
+            "UPDATE access_nodes "
+            "SET encrypted_token = :encrypted_token, "
+            "token_fingerprint = :token_fingerprint",
+            {
+                "encrypted_token": encrypted_token,
+                "token_fingerprint": token_fingerprint,
+            },
+            OSError("database unavailable"),
+        )
         yield
 
     app.state.session_factory = unavailable_session
@@ -38,5 +50,10 @@ async def test_database_unavailability_uses_stable_temporary_error_contract(
         "code": "MASTER_TEMPORARILY_UNAVAILABLE",
         "message": "主节点暂时不可用，请稍后重试",
     }
-    assert "Master database operation failed" in caplog.text
-    assert "database unavailable" in caplog.text
+    assert "Master database operation failed (OperationalError)" in caplog.text
+    assert "database unavailable" not in caplog.text
+    assert "UPDATE access_nodes" not in caplog.text
+    assert "encrypted_token" not in caplog.text
+    assert "token_fingerprint" not in caplog.text
+    assert encrypted_token not in caplog.text
+    assert token_fingerprint not in caplog.text

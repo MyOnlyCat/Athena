@@ -352,6 +352,280 @@ async def test_asset_api_filters_by_lifecycle_search_tag_and_detection_status(
 
 
 @pytest.mark.asyncio
+async def test_asset_api_sorts_by_address_desc_with_stable_pagination(
+    client: AsyncClient,
+) -> None:
+    admin_headers = await approve_node(client)
+    host_ids = [str(UUID(int=index)) for index in range(1, 5)]
+    body = heartbeat_with_hosts(
+        [
+            reported_host(
+                id=host_ids[0],
+                name="fourth-by-name",
+                address="10.0.0.20",
+            ),
+            reported_host(
+                id=host_ids[1],
+                name="third-by-name",
+                address="10.0.0.30",
+                is_local=False,
+            ),
+            reported_host(
+                id=host_ids[2],
+                name="second-by-name",
+                address="10.0.0.30",
+                is_local=False,
+            ),
+            reported_host(
+                id=host_ids[3],
+                name="first-by-name",
+                address="10.0.0.10",
+                is_local=False,
+            ),
+        ]
+    )
+    assert (
+        await client.post(
+            HEARTBEAT_PATH,
+            content=body,
+            headers=signed_headers(body=body),
+        )
+    ).status_code == 200
+
+    pages = [
+        await client.get(
+            f"/api/v1/nodes/{NODE_ID}/assets",
+            headers=admin_headers,
+            params={
+                "page": page,
+                "page_size": 2,
+                "sort_by": "address",
+                "sort_order": "desc",
+            },
+        )
+        for page in (1, 2)
+    ]
+
+    assert all(page.status_code == 200 for page in pages)
+    assert [
+        item["host_id"]
+        for page in pages
+        for item in page.json()["items"]
+    ] == [host_ids[1], host_ids[2], host_ids[0], host_ids[3]]
+
+
+@pytest.mark.asyncio
+async def test_asset_api_sorts_by_last_tested_at(
+    client: AsyncClient,
+) -> None:
+    admin_headers = await approve_node(client)
+    host_ids = [str(UUID(int=index)) for index in range(1, 5)]
+    body = heartbeat_with_hosts(
+        [
+            reported_host(
+                id=host_ids[0],
+                name="tested-third",
+                last_tested_at="2026-08-01T08:03:00Z",
+            ),
+            reported_host(
+                id=host_ids[1],
+                name="tested-first",
+                last_tested_at="2026-08-01T08:01:00Z",
+                is_local=False,
+            ),
+            reported_host(
+                id=host_ids[2],
+                name="tested-second",
+                last_tested_at="2026-08-01T08:02:00Z",
+                is_local=False,
+            ),
+            reported_host(
+                id=host_ids[3],
+                name="untested",
+                last_test_status=None,
+                last_test_code=None,
+                last_tested_at=None,
+                is_local=False,
+            ),
+        ]
+    )
+    assert (
+        await client.post(
+            HEARTBEAT_PATH,
+            content=body,
+            headers=signed_headers(body=body),
+        )
+    ).status_code == 200
+
+    response = await client.get(
+        f"/api/v1/nodes/{NODE_ID}/assets",
+        headers=admin_headers,
+        params={"sort_by": "last_tested_at", "sort_order": "asc"},
+    )
+
+    assert response.status_code == 200
+    assert [item["host_id"] for item in response.json()["items"]] == [
+        host_ids[1],
+        host_ids[2],
+        host_ids[0],
+        host_ids[3],
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sort_by",
+    ["name", "port", "username", "last_test_status"],
+)
+async def test_asset_api_sorts_by_supported_scalar_fields(
+    client: AsyncClient,
+    sort_by: str,
+) -> None:
+    admin_headers = await approve_node(client)
+    host_ids = [str(UUID(int=index)) for index in range(1, 3)]
+    body = heartbeat_with_hosts(
+        [
+            reported_host(
+                id=host_ids[0],
+                name="zulu",
+                port=2222,
+                username="zebra",
+                last_test_status="success",
+                last_test_code="SSH_CONNECTED",
+            ),
+            reported_host(
+                id=host_ids[1],
+                name="alpha",
+                port=22,
+                username="alpha",
+                is_local=False,
+            ),
+        ]
+    )
+    assert (
+        await client.post(
+            HEARTBEAT_PATH,
+            content=body,
+            headers=signed_headers(body=body),
+        )
+    ).status_code == 200
+
+    response = await client.get(
+        f"/api/v1/nodes/{NODE_ID}/assets",
+        headers=admin_headers,
+        params={"sort_by": sort_by, "sort_order": "asc"},
+    )
+
+    assert response.status_code == 200
+    assert [item["host_id"] for item in response.json()["items"]] == [
+        host_ids[1],
+        host_ids[0],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_asset_api_sorts_retired_assets_by_retired_at(
+    client: AsyncClient,
+    app: FastAPI,
+) -> None:
+    admin_headers = await approve_node(client)
+    host_ids = [str(UUID(int=index)) for index in range(1, 3)]
+    initial = heartbeat_with_hosts(
+        [
+            reported_host(id=host_ids[0], name="alpha"),
+            reported_host(
+                id=host_ids[1],
+                name="zulu",
+                is_local=False,
+            ),
+        ]
+    )
+    assert (
+        await client.post(
+            HEARTBEAT_PATH,
+            content=initial,
+            headers=signed_headers(body=initial),
+        )
+    ).status_code == 200
+
+    await allow_next_heartbeat(app)
+    second_snapshot = heartbeat_with_hosts(
+        [
+            reported_host(
+                id=host_ids[1],
+                name="zulu",
+            )
+        ]
+    )
+    assert (
+        await client.post(
+            HEARTBEAT_PATH,
+            content=second_snapshot,
+            headers=signed_headers(
+                body=second_snapshot,
+                nonce="66666666666666666666666666666666",
+            ),
+        )
+    ).status_code == 200
+
+    await allow_next_heartbeat(app)
+    final_snapshot = heartbeat_with_hosts([])
+    assert (
+        await client.post(
+            HEARTBEAT_PATH,
+            content=final_snapshot,
+            headers=signed_headers(
+                body=final_snapshot,
+                nonce="77777777777777777777777777777777",
+            ),
+        )
+    ).status_code == 200
+
+    response = await client.get(
+        f"/api/v1/nodes/{NODE_ID}/assets",
+        headers=admin_headers,
+        params={
+            "lifecycle_status": "retired",
+            "sort_by": "retired_at",
+            "sort_order": "desc",
+        },
+    )
+
+    assert response.status_code == 200
+    assert [item["host_id"] for item in response.json()["items"]] == [
+        host_ids[1],
+        host_ids[0],
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"sort_by": "unsupported"},
+        {"sort_order": "sideways"},
+    ],
+)
+async def test_asset_api_rejects_invalid_sort_values_with_chinese_error(
+    client: AsyncClient,
+    params: dict[str, str],
+) -> None:
+    admin_headers = await approve_node(client)
+
+    response = await client.get(
+        f"/api/v1/nodes/{NODE_ID}/assets",
+        headers=admin_headers,
+        params=params,
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "code": "INVALID_REQUEST",
+        "message": "请求参数无效",
+    }
+
+
+@pytest.mark.asyncio
 async def test_snapshot_accepts_five_hundred_hosts_and_rejects_more_atomically(
     client: AsyncClient,
     app: FastAPI,

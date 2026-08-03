@@ -313,6 +313,153 @@ async def test_heartbeat_rejects_reported_at_without_timezone(
     }
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unknown_field_location", ["top_level", "node"])
+async def test_unsupported_protocol_takes_priority_over_unknown_fields(
+    client: AsyncClient,
+    unknown_field_location: str,
+) -> None:
+    await approve_node(client)
+    payload: dict[str, Any] = json.loads(heartbeat_body(protocol_version="v2"))
+    if unknown_field_location == "top_level":
+        payload["future_capability"] = {"enabled": True}
+    else:
+        payload["node"]["future_metadata"] = "v2-only"
+    body = json.dumps(payload, separators=(",", ":")).encode()
+
+    response = await client.post(
+        HEARTBEAT_PATH,
+        content=body,
+        headers=signed_headers(
+            body=body,
+            nonce="66666666666666666666666666666666",
+        ),
+    )
+
+    assert response.status_code == 426
+    assert response.json() == {
+        "code": "NODE_PROTOCOL_UNSUPPORTED",
+        "message": "节点协议版本不受支持",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unknown_field_location", ["top_level", "node"])
+async def test_supported_protocol_still_rejects_unknown_fields(
+    client: AsyncClient,
+    unknown_field_location: str,
+) -> None:
+    await approve_node(client)
+    payload: dict[str, Any] = json.loads(heartbeat_body())
+    if unknown_field_location == "top_level":
+        payload["unexpected"] = True
+    else:
+        payload["node"]["unexpected"] = True
+    body = json.dumps(payload, separators=(",", ":")).encode()
+
+    response = await client.post(
+        HEARTBEAT_PATH,
+        content=body,
+        headers=signed_headers(
+            body=body,
+            nonce="77777777777777777777777777777777",
+        ),
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "code": "NODE_PAYLOAD_INVALID",
+        "message": "心跳负载无效",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(b"not-json", id="invalid-json"),
+        pytest.param(b"[]", id="non-object-json"),
+        pytest.param(b"{}", id="missing-version"),
+        pytest.param(b'{"protocol_version":""}', id="empty-version"),
+        pytest.param(b'{"protocol_version":1}', id="non-string-version"),
+    ],
+)
+async def test_heartbeat_rejects_unusable_protocol_versions(
+    client: AsyncClient,
+    body: bytes,
+) -> None:
+    await approve_node(client)
+
+    response = await client.post(
+        HEARTBEAT_PATH,
+        content=body,
+        headers=signed_headers(
+            body=body,
+            nonce="88888888888888888888888888888888",
+        ),
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "code": "NODE_PAYLOAD_INVALID",
+        "message": "心跳负载无效",
+    }
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_rejects_excessively_nested_json_with_stable_error(
+    client: AsyncClient,
+) -> None:
+    await approve_node(client)
+    nesting_depth = 5_000
+    body = (
+        b'{"protocol_version":"v1","future":'
+        + (b"[" * nesting_depth)
+        + b"0"
+        + (b"]" * nesting_depth)
+        + b"}"
+    )
+
+    response = await client.post(
+        HEARTBEAT_PATH,
+        content=body,
+        headers=signed_headers(
+            body=body,
+            nonce="abababababababababababababababab",
+        ),
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "code": "NODE_PAYLOAD_INVALID",
+        "message": "心跳负载无效",
+    }
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_verifies_signature_before_parsing_json(
+    client: AsyncClient,
+) -> None:
+    await approve_node(client)
+    body = b"not-json"
+
+    response = await client.post(
+        HEARTBEAT_PATH,
+        content=body,
+        headers=signed_headers(
+            body=body,
+            token="wrong-token-with-at-least-32-characters",
+            nonce="99999999999999999999999999999999",
+        ),
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "code": "NODE_SIGNATURE_INVALID",
+        "message": "节点签名无效",
+    }
+
+
 def test_heartbeat_reported_at_is_normalized_to_utc() -> None:
     node = HeartbeatNode.model_validate(
         {
