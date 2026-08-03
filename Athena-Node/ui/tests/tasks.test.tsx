@@ -27,4 +27,11 @@ test("labels the task page as current tasks", () => {
   );
 
   expect(screen.getByRole("heading", { name: "当前任务" })).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      `浏览器时区：${
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "浏览器本地时区"
+      }`
+    )
+  ).toBeInTheDocument();
 });

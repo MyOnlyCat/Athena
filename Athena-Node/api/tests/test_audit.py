@@ -22,6 +22,7 @@ def test_authenticated_mutation_is_visible_in_audit_log(client):
 
     logs = client.get("/api/v1/audit-logs", headers=headers)
     assert logs.status_code == 200
+    assert all(item["created_at"].endswith("Z") for item in logs.json())
     assert any(
         item["action"] == "POST /api/v1/hosts"
         and item["result"] == "success"

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -6,7 +7,7 @@ import asyncssh
 import pytest
 from sqlalchemy import func, select
 
-from app.models.deployment import DeploymentTarget, DeploymentTask
+from app.models.deployment import DeploymentEvent, DeploymentTarget, DeploymentTask
 from app.models.host import Host
 from app.schemas.deployment import ClaimedTask
 from app.services.crypto import CredentialCipher
@@ -59,6 +60,60 @@ async def test_executing_target_becomes_manual_review_after_restart(db_session):
     assert recovered == 1
     assert target.status == "manual_review"
     assert task.status == "manual_review"
+
+
+def test_task_target_and_event_datetimes_are_utc_rfc3339(client):
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "AdminPassw0rd!"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    recorded_at = datetime(2026, 8, 3, 10, 30, tzinfo=UTC)
+
+    async def seed_task() -> str:
+        async with client.app.state.session_factory() as session:
+            task = DeploymentTask(
+                master_task_id="utc-contract-task",
+                artifact_url="https://artifacts.example/app.jar",
+                artifact_sha256="a" * 64,
+                artifact_name="app.jar",
+                claimed_at=recorded_at,
+                started_at=recorded_at,
+                finished_at=recorded_at,
+                targets=[
+                    DeploymentTarget(
+                        target_ip="10.0.0.10",
+                        target_directory="/opt/app",
+                        command="true",
+                        started_at=recorded_at,
+                        finished_at=recorded_at,
+                    )
+                ],
+            )
+            session.add(task)
+            session.add(
+                DeploymentEvent(
+                    task_id="utc-contract-task",
+                    sequence=1,
+                    event_type="completed",
+                    payload={},
+                    created_at=recorded_at,
+                )
+            )
+            await session.commit()
+            return task.id
+
+    task_id = client.portal.call(seed_task)
+    task = client.get(f"/api/v1/tasks/{task_id}", headers=headers)
+    events = client.get(f"/api/v1/tasks/{task_id}/events", headers=headers)
+
+    assert task.status_code == 200
+    assert events.status_code == 200
+    for field in ("claimed_at", "started_at", "finished_at"):
+        assert task.json()[field].endswith("Z")
+    for field in ("started_at", "finished_at"):
+        assert task.json()["targets"][0][field].endswith("Z")
+    assert events.json()[0]["created_at"].endswith("Z")
 
 
 class FakeGatewaySession:

@@ -1,7 +1,8 @@
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
+
+from app.core.time import UtcDatetime
 
 
 class TargetResponse(BaseModel):
@@ -14,8 +15,8 @@ class TargetResponse(BaseModel):
     status: str
     progress: int
     exit_code: int | None
-    started_at: datetime | None
-    finished_at: datetime | None
+    started_at: UtcDatetime | None
+    finished_at: UtcDatetime | None
 
 
 class TaskResponse(BaseModel):
@@ -26,9 +27,9 @@ class TaskResponse(BaseModel):
     artifact_name: str
     artifact_sha256: str
     status: str
-    claimed_at: datetime
-    started_at: datetime | None
-    finished_at: datetime | None
+    claimed_at: UtcDatetime
+    started_at: UtcDatetime | None
+    finished_at: UtcDatetime | None
     error_code: str | None
     error_message: str | None
     targets: list[TargetResponse]
@@ -42,4 +43,4 @@ class EventResponse(BaseModel):
     target_id: str | None
     event_type: str
     payload: dict[str, Any]
-    created_at: datetime
+    created_at: UtcDatetime

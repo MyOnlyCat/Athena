@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from app.core.config import Settings
 from app.main import create_app
+from app.schemas.heartbeat import HeartbeatNode
 
 NODE_ID = "019d3a7e-7c42-7000-8000-000000000007"
 NODE_TOKEN = "node-token-for-authenticated-heartbeat"
@@ -56,6 +57,7 @@ def heartbeat_body(
     reported_name: str = "上海接入节点",
     hostname: str = "athena-node-01",
     software_version: str = "0.2.0",
+    reported_at: str = "2000-01-01T00:00:00Z",
 ) -> bytes:
     return json.dumps(
         {
@@ -65,7 +67,7 @@ def heartbeat_body(
                 "name": reported_name,
                 "version": software_version,
                 "hostname": hostname,
-                "reported_at": "2000-01-01T00:00:00Z",
+                "reported_at": reported_at,
             },
             "hosts": [],
         },
@@ -126,6 +128,77 @@ async def listed_node(
     response = await client.get("/api/v1/nodes", headers=admin_headers)
     assert response.status_code == 200
     return dict(response.json()["items"][0])
+
+
+@pytest.mark.asyncio
+async def test_pending_and_rejected_nodes_have_distinct_heartbeat_contracts(
+    client: AsyncClient,
+) -> None:
+    registration_body = json.dumps(
+        {
+            "node_id": NODE_ID,
+            "reported_name": "待审批节点",
+            "hostname": "pending-node",
+            "software_version": "0.1.0",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()
+    submitted = await client.post(
+        "/api/node/v1/registration-applications",
+        content=registration_body,
+        headers=signed_headers(
+            body=registration_body,
+            path="/api/node/v1/registration-applications",
+        ),
+    )
+    heartbeat = heartbeat_body()
+    pending = await client.post(
+        HEARTBEAT_PATH,
+        content=heartbeat,
+        headers=signed_headers(
+            body=heartbeat,
+            nonce="10101010101010101010101010101010",
+        ),
+    )
+
+    admin_headers = await login_headers(client)
+    applications = await client.get(
+        "/api/v1/registration-applications",
+        headers=admin_headers,
+    )
+    application_id = applications.json()["items"][0]["id"]
+    rejected_application = await client.post(
+        f"/api/v1/registration-applications/{application_id}/reject",
+        headers=admin_headers,
+        json={},
+    )
+    rejected = await client.post(
+        HEARTBEAT_PATH,
+        content=heartbeat,
+        headers=signed_headers(
+            body=heartbeat,
+            nonce="20202020202020202020202020202020",
+        ),
+    )
+    final_applications = await client.get(
+        "/api/v1/registration-applications",
+        headers=admin_headers,
+    )
+
+    assert submitted.status_code == 202
+    assert pending.status_code == 404
+    assert pending.json() == {
+        "code": "NODE_NOT_APPROVED",
+        "message": "节点尚未批准",
+    }
+    assert rejected_application.status_code == 200
+    assert rejected.status_code == 409
+    assert rejected.json() == {
+        "code": "REGISTRATION_REJECTED",
+        "message": "接入申请已被拒绝，请联系管理员恢复后手动重试",
+    }
+    assert final_applications.json()["items"][0]["status"] == "rejected"
 
 
 @pytest.mark.asyncio
@@ -215,6 +288,43 @@ async def test_heartbeat_rejections_do_not_change_last_heartbeat(
     )
     assert (await listed_node(client, admin_headers))["last_heartbeat_at"] == accepted_at
     assert (await listed_node(client, admin_headers))["reported_name"] == "已接受名称"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_rejects_reported_at_without_timezone(
+    client: AsyncClient,
+) -> None:
+    await approve_node(client)
+    body = heartbeat_body(reported_at="2026-08-03T10:30:00")
+
+    response = await client.post(
+        HEARTBEAT_PATH,
+        content=body,
+        headers=signed_headers(
+            body=body,
+            nonce="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "code": "NODE_PAYLOAD_INVALID",
+        "message": "心跳负载无效",
+    }
+
+
+def test_heartbeat_reported_at_is_normalized_to_utc() -> None:
+    node = HeartbeatNode.model_validate(
+        {
+            "id": NODE_ID,
+            "name": "上海接入节点",
+            "version": "0.2.0",
+            "hostname": "athena-node-01",
+            "reported_at": "2026-08-03T18:30:00+08:00",
+        }
+    )
+
+    assert node.reported_at.isoformat() == "2026-08-03T10:30:00+00:00"
 
 
 @pytest.mark.asyncio
@@ -421,6 +531,8 @@ async def test_node_list_paginates_filters_sorts_and_uses_master_receipt_time(
     assert stale.status_code == 200
     assert stale.json()["total"] == 1
     assert stale.json()["items"][0]["connectivity_status"] == "stale"
+    assert stale.json()["items"][0]["approved_at"].endswith("Z")
+    assert stale.json()["items"][0]["last_heartbeat_at"].endswith("Z")
 
     async with app.state.session_factory() as session:
         await session.execute(

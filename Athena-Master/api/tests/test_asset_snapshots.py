@@ -177,7 +177,7 @@ async def test_missing_asset_is_retired_and_same_identity_is_restored(
         params={"lifecycle_status": "retired"},
     )
     assert retired.json()["total"] == 1
-    assert retired.json()["items"][0]["retired_at"] is not None
+    assert retired.json()["items"][0]["retired_at"].endswith("Z")
 
     await allow_next_heartbeat(app)
     restored_body = heartbeat_with_hosts([reported_host(address="10.0.0.11")])

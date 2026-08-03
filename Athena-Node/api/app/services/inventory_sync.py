@@ -126,9 +126,15 @@ class InventorySynchronizer:
         except AppError as exc:
             if exc.code == "NODE_DISABLED":
                 self.status = "disabled"
+            elif exc.code == "MASTER_TEMPORARILY_UNAVAILABLE":
+                self.status = "connection_failed"
             elif exc.code in AUTHENTICATION_ERROR_CODES:
                 self.status = "authentication_failed"
-            elif exc.code in {"NODE_NOT_FOUND", "NODE_NOT_APPROVED"}:
+            elif exc.code in {
+                "NODE_NOT_FOUND",
+                "NODE_NOT_APPROVED",
+                "REGISTRATION_REJECTED",
+            }:
                 self.status = "pending"
             else:
                 self.status = "error"

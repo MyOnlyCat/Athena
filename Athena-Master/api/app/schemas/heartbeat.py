@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.core.time import as_utc
+from app.core.time import AwareUtcDatetime, as_utc
 from app.schemas.asset import HeartbeatHost
 from app.schemas.node import ManagedAccessNodeResponse
 
@@ -18,7 +18,7 @@ class HeartbeatNode(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     version: str = Field(min_length=1, max_length=64)
     hostname: str = Field(min_length=1, max_length=255)
-    reported_at: datetime
+    reported_at: AwareUtcDatetime
 
     @field_validator("id")
     @classmethod

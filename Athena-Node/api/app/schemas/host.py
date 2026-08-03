@@ -1,7 +1,8 @@
-from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+
+from app.core.time import UtcDatetime
 
 HostTestCode = Literal[
     "SSH_CONNECTED",
@@ -46,8 +47,8 @@ class HostResponse(HostBase):
     last_test_status: str | None
     last_test_code: HostTestCode | None
     last_test_message: str | None
-    last_tested_at: datetime | None
-    created_at: datetime
+    last_tested_at: UtcDatetime | None
+    created_at: UtcDatetime
     encrypted_password: str = Field(exclude=True)
 
     @computed_field  # type: ignore[prop-decorator]

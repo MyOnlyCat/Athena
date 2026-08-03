@@ -6,6 +6,11 @@
 
 本文档描述 Athena-Node 主动访问 Athena-Master 的 v1 协议。Master 不回连 Node。
 
+第一阶段单个 Master 最多管理 100 个已批准接入节点；第 101 个申请在审批时返回
+`422 ACCESS_NODE_CAPACITY_EXCEEDED`，申请保持待审批且不会创建部分节点记录。每个
+Node 最多上报 500 条主机资产，全局最多保留 10,000 条在管资产，单次心跳正文最多
+5 MiB。
+
 ## 注册申请与审批
 
 Node 管理员先在本地保存 Master 地址和节点独占 Token，再使用独立的“申请接入”
@@ -110,6 +115,17 @@ body={"running_tasks":0}
 signature=89fc0647ffaec69188abcac1bc0eb747ac6bf869a35aac18753dfa9ee6e70caa
 ```
 
+## 传输安全与响应可信度
+
+HMAC 只验证 Node 请求的完整性和持有 Token 的身份，不加密传输内容。使用明文 HTTP
+时，节点身份、内网地址、用户名和标签等资产信息均可被链路观察者读取；跨越不可信
+网络时必须在受信网络或 HTTPS/TLS 反向代理后部署。
+
+第一阶段 Master 响应没有签名，Node 也不验证响应来源完整性或响应重放。这个已知风险
+只在当前注册状态、心跳确认和资产快照范围内接受。实现任务下发或远程命令执行前，
+必须重新完成威胁建模，并增加响应认证与防重放机制；在此之前，Master 响应不能作为
+授权 Node 执行远程操作的可信依据。
+
 ## 子节点连接配置与热替换
 
 子节点本地提供以下已认证接口：
@@ -212,6 +228,13 @@ Master 严格拒绝未知字段、重复 host ID、字符串形式端口、非�
 协议版本或限流被拒绝，该 nonce 仍会被持久消费，重放返回
 `409 NODE_NONCE_REPLAYED`。
 
+尚未获批的申请发送心跳时返回 `404 NODE_NOT_APPROVED`，已拒绝申请返回
+`409 REGISTRATION_REJECTED`，完全未知且没有申请记录的 Node ID 返回
+`404 NODE_NOT_FOUND`。Master 发生可恢复的数据库不可用时返回
+`503 MASTER_TEMPORARILY_UNAVAILABLE`；Node 将结构化或非 JSON 的 Master 5xx 响应
+统一归一为该机器码，状态显示为“连接失败”，并从约 5 秒开始按带抖动的指数退避，
+最长不超过 300 秒，成功后恢复正常 60 秒间隔。
+
 管理员通过 `GET /api/v1/nodes` 查看接入节点。接口要求管理员 Bearer Token，支持：
 
 | 参数 | 说明 |
@@ -286,6 +309,23 @@ Node 上报的资产字段。
 心跳、完整资产快照同步以及周期连接状态推导不产生审计记录。该管理接口不改变本文的
 Node v1 请求正文、签名或响应契约；第一阶段不提供审计写入、删除、筛选、导出、报表
 或自动清理。
+
+## 兼容性、升级与第一阶段边界
+
+`v1` 在兼容升级中只允许增加可选字段；删除字段、改变字段语义或新增必填字段必须使用
+新协议版本。滚动升级顺序固定为 Master 先、Node 后：
+
+1. 停止 Node 的同步循环与 Master，备份两个 SQLite 数据库和各自凭据密钥。
+2. 升级 Master，执行全部 Alembic 迁移，以单实例、单进程、单 worker 启动，并确认
+   `/api/v1/health` 正常。
+3. 升级 Node，执行全部 Alembic 迁移并启动，确认 UI 代理健康检查、审批状态和首次
+   心跳/完整资产快照均成功。
+4. 发生不兼容错误时停止升级并使用成套数据库与密钥备份回滚，不能只回滚二进制。
+
+第一阶段明确不包含 Master Docker Compose、制品管理、任务下发、远程命令执行、
+Master 到 Node 的回连或 WebSocket、RBAC、高可用、多实例/多 worker，以及跨 Node 的
+资产合并。下列任务领取、任务事件和任务状态章节是后续协议草案，不属于本阶段已实现
+或已验收能力，也不能绕过上一节的响应可信度安全门槛。
 
 ## 领取发布任务
 
@@ -380,34 +420,47 @@ Node v1 请求正文、签名或响应契约；第一阶段不提供审计写入
 ```json
 {
   "code": "NODE_SIGNATURE_INVALID",
-  "message": "节点签名无效",
-  "request_id": "019fae08-0ab1-7da1-9d22-612a0c5bb9ed",
-  "details": {}
+  "message": "节点签名无效"
 }
 ```
 
-| HTTP | code | 场景 |
-| --- | --- | --- |
-| 401 | `NODE_SIGNATURE_INVALID` | 签名不匹配 |
-| 401 | `NODE_TIMESTAMP_INVALID` | 时钟偏差超过 300 秒 |
-| 403 | `NODE_DISABLED` | 节点已被管理员禁用 |
-| 404 | `NODE_NOT_FOUND` | 节点未注册 |
-| 409 | `NODE_NONCE_REPLAYED` | nonce 重放 |
-| 422 | `NODE_AUTH_INVALID` | 认证头格式无效 |
-| 422 | `NODE_PAYLOAD_INVALID` | 心跳正文无效或节点身份不匹配 |
-| 413 | `NODE_PAYLOAD_TOO_LARGE` | 心跳正文超过 5 MiB |
-| 422 | `ASSET_CAPACITY_EXCEEDED` | 全局在管资产将超过 10,000 条 |
-| 426 | `NODE_PROTOCOL_UNSUPPORTED` | 正文协议版本不受支持 |
-| 409 | `TASK_LEASE_CONFLICT` | 任务已被领取 |
-| 422 | `TASK_PAYLOAD_INVALID` | 任务结构无效 |
-| 429 | `NODE_RATE_LIMITED` | 节点请求过快 |
-| 503 | `MASTER_TEMPORARILY_UNAVAILABLE` | 主节点暂不可用 |
+Master 的稳定错误响应只包含 `code` 与中文 `message`：
+
+| HTTP | code | message | 场景 |
+| --- | --- | --- | --- |
+| 401 | `NODE_SIGNATURE_INVALID` | 节点签名无效 | 签名不匹配 |
+| 401 | `NODE_TIMESTAMP_INVALID` | 节点时间戳无效 | 时钟偏差超过 300 秒 |
+| 403 | `NODE_DISABLED` | 接入节点已被禁用 | 节点已被管理员禁用 |
+| 404 | `NODE_NOT_APPROVED` | 节点尚未批准 | 有申请但尚未形成正式身份 |
+| 404 | `NODE_NOT_FOUND` | 接入节点不存在 | 没有正式身份或申请记录 |
+| 409 | `REGISTRATION_REJECTED` | 接入申请已被拒绝，请联系管理员恢复后手动重试 | 最新申请已拒绝 |
+| 409 | `NODE_NONCE_REPLAYED` | 节点 nonce 已被使用 | nonce 重放 |
+| 422 | `NODE_AUTH_INVALID` | 节点认证头无效 | 认证头格式无效 |
+| 422 | `NODE_PAYLOAD_INVALID` | 心跳负载无效 | 心跳正文结构无效 |
+| 422 | `NODE_PAYLOAD_INVALID` | 心跳负载中的节点身份不匹配 | 正文与认证节点不一致 |
+| 413 | `NODE_PAYLOAD_TOO_LARGE` | 心跳正文超过 5 MiB 限制 | 心跳正文过大 |
+| 422 | `ACCESS_NODE_CAPACITY_EXCEEDED` | 接入节点数量已达到 100 个支持上限 | 批准第 101 个接入节点 |
+| 422 | `ASSET_CAPACITY_EXCEEDED` | 在管主机资产数量超过 10000 条限制 | 全局在管资产将超限 |
+| 426 | `NODE_PROTOCOL_UNSUPPORTED` | 节点协议版本不受支持 | 正文协议版本不受支持 |
+| 429 | `NODE_RATE_LIMITED` | 节点请求过于频繁，请稍后重试 | 每节点分钟总额度超限 |
+| 429 | `NODE_RATE_LIMITED` | 心跳请求过于频繁，请稍后重试 | 心跳间隔少于十秒 |
+| 503 | `MASTER_TEMPORARILY_UNAVAILABLE` | 主节点暂时不可用，请稍后重试 | 可恢复的 Master 数据库不可用 |
+
+正文大小、认证头格式、时间窗口、未知/未批准/已拒绝身份、错误签名和禁用状态在消费
+nonce 前拒绝。已认证且启用的节点会先持久化消费 nonce，再检查分钟限流、心跳间隔、
+正文结构、协议版本和资产容量；这些后续校验失败时使用同一 nonce 重试会得到
+`409 NODE_NONCE_REPLAYED`。错误请求不得更新最后心跳、部分资产或退役状态。
 
 ## 主节点验收
 
 - 固定测试向量通过。
-- 拒绝过期时间戳和重复 nonce。
-- 心跳完整覆盖主机清单且不接收密码。
-- 同一任务不能重复租给不同节点。
-- 重复事件批次不生成重复日志，只确认连续事件序号。
-- 主节点 UI 能按目标实时展示阶段、进度、stdout、stderr 和结果。
+- Node 真实提交申请、Master 审批、Node 主动同步状态和完整资产心跳链路通过。
+- 拒绝错误签名、过期时间戳和重复 nonce，且错误请求不改变节点与资产状态。
+- 资产 `[A, B]` 更新为 `[A]` 时 B 软退役，再次出现时恢复；禁用节点后同步失败，
+  重新启用后自动恢复。
+- 100 个接入节点、每 Node 500 条资产、全局 10,000 条在管资产与 5 MiB 正文边界有
+  自动化覆盖。
+- 所有 API 时间以带时区的 UTC RFC 3339 返回，相关页面按浏览器时区显示并标注时区。
+- Master 迁移、初始化管理员登录、API 健康检查、UI 启动和 UI 到 API 代理冒烟通过。
+
+任务租约、事件幂等和实时任务 UI 属于后续草案验收，不计入第一阶段完成条件。

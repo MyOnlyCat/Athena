@@ -42,6 +42,8 @@ export function AdministratorsPage() {
   const [form] = Form.useForm<CreateForm>();
   const [resetForm] = Form.useForm<{ password: string }>();
   const queryKey = ["administrators", page, pageSize] as const;
+  const browserTimeZone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "浏览器本地时区";
   const query = useQuery({
     queryKey,
     queryFn: () => administratorsApi.list(page, pageSize)
@@ -103,6 +105,7 @@ export function AdministratorsPage() {
           <p className="eyebrow">ADMINISTRATORS</p>
           <h1>管理员</h1>
           <p>维护可登录 Athena-Master 的管理员账号。</p>
+          <p className="muted">浏览器时区：{browserTimeZone}</p>
         </div>
         <Button
           type="primary"

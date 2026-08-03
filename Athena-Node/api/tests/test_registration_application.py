@@ -84,6 +84,45 @@ async def test_node_preserves_master_registration_error_contract() -> None:
     assert captured.value.status_code == 409
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(
+            503,
+            json={
+                "code": "DATABASE_DRIVER_ERROR",
+                "message": "raw backend detail",
+            },
+        ),
+        httpx.Response(503, text="service unavailable"),
+    ],
+)
+async def test_node_normalizes_temporary_master_failures(
+    response: httpx.Response,
+) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return response
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://master.test",
+    )
+    client = MasterClient(
+        "http://master.test",
+        "018f47a2-4b5c-7def-8123-456789abcdef",
+        "registration-secret-token-value-123",
+        http,
+    )
+
+    with pytest.raises(AppError) as captured:
+        await client.submit_registration({"node_id": client.node_id})
+
+    assert captured.value.code == "MASTER_TEMPORARILY_UNAVAILABLE"
+    assert captured.value.message == "主节点暂时不可用，请稍后重试"
+    assert captured.value.status_code == 503
+
+
 def _auth_headers(client: TestClient) -> dict[str, str]:
     response = client.post(
         "/api/v1/auth/login",

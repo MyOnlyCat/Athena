@@ -1,7 +1,11 @@
+import logging
+
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
+
+logger = logging.getLogger(__name__)
 
 
 class AppError(Exception):
@@ -35,4 +39,21 @@ async def validation_error_handler(_: Request, __: RequestValidationError) -> JS
     return JSONResponse(
         status_code=422,
         content={"code": "INVALID_REQUEST", "message": "请求参数无效"},
+    )
+
+
+async def temporary_unavailable_handler(
+    _: Request,
+    exc: Exception,
+) -> JSONResponse:
+    logger.error(
+        "Master database operation failed",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return JSONResponse(
+        status_code=503,
+        content={
+            "code": "MASTER_TEMPORARILY_UNAVAILABLE",
+            "message": "主节点暂时不可用，请稍后重试",
+        },
     )

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "antd";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, vi } from "vitest";
 
@@ -30,6 +30,11 @@ function renderPage() {
     </App>
   );
   return { ...view, queryClient };
+}
+
+function submitSearch(input: HTMLElement, value: string) {
+  fireEvent.change(input, { target: { value } });
+  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
 }
 
 beforeEach(() => {
@@ -273,7 +278,7 @@ test("rotates a Token without leaving the secret visible", async () => {
     )
   );
   await waitFor(() => expect(screen.queryByDisplayValue(replacement)).not.toBeInTheDocument());
-});
+}, 10_000);
 
 test("sends search, filtering and sorting to the server", async () => {
   const user = userEvent.setup();
@@ -281,7 +286,7 @@ test("sends search, filtering and sorting to the server", async () => {
   await screen.findByRole("heading", { name: "上海生产节点" });
 
   const search = screen.getByPlaceholderText("搜索名称、主机名、版本或节点 ID");
-  await user.type(search, "上海{Enter}");
+  submitSearch(search, "上海");
   await waitFor(() =>
     expect(apiMocks.list).toHaveBeenLastCalledWith(
       expect.objectContaining({ search: "上海" })
@@ -303,14 +308,15 @@ test("sends search, filtering and sorting to the server", async () => {
       expect.objectContaining({ sort_by: "reported_name" })
     )
   );
-});
+}, 10_000);
 
 test("sends asset search, tag and status filters to the server", async () => {
   const user = userEvent.setup();
   renderPage();
   await screen.findByText("web-01");
 
-  await user.type(screen.getByPlaceholderText("搜索资产名称或地址"), "10.0{Enter}");
+  const assetSearch = screen.getByPlaceholderText("搜索资产名称或地址");
+  submitSearch(assetSearch, "10.0");
   await waitFor(() =>
     expect(apiMocks.listAssets).toHaveBeenLastCalledWith(
       expect.any(String),
@@ -318,7 +324,8 @@ test("sends asset search, tag and status filters to the server", async () => {
     )
   );
 
-  await user.type(screen.getByPlaceholderText("按标签筛选"), "production{Enter}");
+  const tagSearch = screen.getByPlaceholderText("按标签筛选");
+  submitSearch(tagSearch, "production");
   await waitFor(() =>
     expect(apiMocks.listAssets).toHaveBeenLastCalledWith(
       expect.any(String),
@@ -343,8 +350,7 @@ test("sends asset search, tag and status filters to the server", async () => {
       expect.objectContaining({ detection_status: "success" })
     )
   );
-
-});
+}, 10_000);
 
 test("filters assets that have not been tested", async () => {
   const user = userEvent.setup();

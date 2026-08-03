@@ -95,6 +95,9 @@ Master 使用 `ATHENA_MASTER_CREDENTIAL_KEY` 对 Node Token 加密落库。API�
 旧数据库若已有重复 Node Token，启动时的指纹回填会明确拒绝继续运行，管理员必须先
 为受影响节点配置不同 Token，系统不会自动选择或泄露冲突 Token。
 
+第一阶段最多批准 100 个接入节点。批准第 101 个申请返回
+`422 ACCESS_NODE_CAPACITY_EXCEEDED`，申请保持待审批且不会创建部分节点记录。
+
 ## 认证心跳与接入节点状态
 
 已获批 Node 使用 `POST /api/node/v1/nodes/heartbeat` 上报 v1 心跳。Master 在解析 JSON
@@ -153,6 +156,11 @@ Token 轮换不是双 Token 切换，管理员应先在 Node 本地
 “状态未知（来源节点离线）”。两种情况下仍保留最后检测状态、标准错误码和检测时间，
 避免将历史结果误报为当前健康，又不丢失排障线索。
 
+HMAC 认证不加密心跳正文；明文 HTTP 会暴露节点身份、内网地址、用户名和标签，应仅
+用于受信网络，跨越不可信网络时必须使用 HTTPS/TLS。第一阶段 Master 响应未签名，
+Node 不验证响应完整性或防重放；任务下发和远程执行必须等到重新完成威胁建模并增加
+响应认证后才能进入实现。详见[Master 与接入节点协议](../docs/api/master-node-protocol.md)。
+
 ## 健康概览
 
 管理员接口 `GET /api/v1/overview` 返回接入节点管理状态、连接状态和在管资产健康汇总。
@@ -197,6 +205,51 @@ Node 下的资产计入状态未知；心跳延迟 Node 的资产不冒充当前
 cd Athena-Master\api
 .\.venv\Scripts\python.exe -m alembic upgrade head
 .\.venv\Scripts\python.exe -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8001 --workers 1
+```
+
+可从 `Athena-Master\ui` 运行真实启动冒烟；脚本使用临时 SQLite 和动态端口，依次验证
+全部迁移、初始化管理员登录、API 健康检查、UI 以及 UI 到 API 的代理链路，并在退出时
+清理子进程：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\test-start-dev.ps1
+```
+
+升级时固定先 Master、后 Node：停止两端服务并成套备份数据库与凭据密钥；升级 Master
+并执行迁移、单 worker 启动和健康检查后，再升级 Node、执行迁移并确认首次心跳与完整
+资产快照。回滚时数据库、密钥和程序必须成套恢复。
+
+第一阶段不包含 Master Docker Compose、制品/任务下发、远程执行、Master 回连或
+WebSocket、RBAC、高可用、多实例/多 worker 及跨 Node 资产合并。
+
+## 可重复的第一阶段验收
+
+在已安装两端开发依赖和 UI 依赖的仓库根目录按顺序运行；Node API 全量测试包含真实
+TCP 的 Node–Master 注册、审批、心跳和资产生命周期集成用例：
+
+```powershell
+cd Athena-Node\api
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m mypy app
+.\.venv\Scripts\python.exe -m pytest -q
+
+cd ..\..\Athena-Master\api
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m mypy app
+.\.venv\Scripts\python.exe -m pytest -q
+
+cd ..\..\Athena-Node\ui
+npm test -- --run
+npm run lint
+npm run typecheck
+npm run build
+
+cd ..\..\Athena-Master\ui
+npm test -- --run
+npm run lint
+npm run typecheck
+npm run build
+powershell -ExecutionPolicy Bypass -File .\scripts\test-start-dev.ps1
 ```
 
 节点通信接口见[Master 与接入节点协议](../docs/api/master-node-protocol.md)，后续工作见

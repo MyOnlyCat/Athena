@@ -5,6 +5,8 @@ import { auditApi } from "../../shared/api/client";
 
 export function AuditPage() {
   const query = useQuery({ queryKey: ["audit"], queryFn: auditApi.list });
+  const browserTimeZone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "浏览器本地时区";
   return (
     <div className="page-stack">
       <header className="page-header">
@@ -12,6 +14,7 @@ export function AuditPage() {
           <p className="eyebrow">SECURITY</p>
           <h1>审计日志</h1>
           <p>追踪登录用户执行的管理与文件操作。</p>
+          <p className="muted">浏览器时区：{browserTimeZone}</p>
         </div>
       </header>
       <section className="content-card">

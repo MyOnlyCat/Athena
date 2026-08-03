@@ -10,11 +10,8 @@ def as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def require_aware_utc(value: datetime) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("datetime must include a timezone")
-    return value.astimezone(UTC)
+def to_rfc3339(value: datetime) -> str:
+    return as_utc(value).isoformat().replace("+00:00", "Z")
 
 
 UtcDatetime = Annotated[datetime, AfterValidator(as_utc)]
-AwareUtcDatetime = Annotated[datetime, AfterValidator(require_aware_utc)]
