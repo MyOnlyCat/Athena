@@ -15,7 +15,7 @@ class Base(DeclarativeBase):
 
 
 def create_engine(settings: Settings) -> AsyncEngine:
-    engine = create_async_engine(settings.database_url)
+    engine = create_async_engine(settings.database_url, hide_parameters=True)
 
     if settings.database_url.startswith("sqlite"):
 

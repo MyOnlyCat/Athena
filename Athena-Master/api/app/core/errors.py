@@ -46,10 +46,7 @@ async def temporary_unavailable_handler(
     _: Request,
     exc: Exception,
 ) -> JSONResponse:
-    logger.error(
-        "Master database operation failed",
-        exc_info=(type(exc), exc, exc.__traceback__),
-    )
+    logger.error("Master database operation failed (%s)", type(exc).__name__)
     return JSONResponse(
         status_code=503,
         content={

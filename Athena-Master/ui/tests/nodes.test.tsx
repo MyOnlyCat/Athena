@@ -100,8 +100,31 @@ test("shows the selected access node's read-only host assets", async () => {
   expect(screen.getByText("在管")).toBeInTheDocument();
   expect(apiMocks.listAssets).toHaveBeenCalledWith(
     "019d3a7e-7c42-7000-8000-000000000007",
-    expect.objectContaining({ page: 1, page_size: 20 })
+    expect.objectContaining({
+      page: 1,
+      page_size: 20,
+      sort_by: "name",
+      sort_order: "asc"
+    })
   );
+});
+
+test("clears the selected node and its assets when filters return no nodes", async () => {
+  renderPage();
+  expect(await screen.findByText("web-01")).toBeInTheDocument();
+  apiMocks.list.mockResolvedValueOnce({
+    items: [],
+    page: 1,
+    page_size: 20,
+    total: 0
+  });
+
+  submitSearch(screen.getByPlaceholderText("搜索名称、主机名、版本或节点 ID"), "不存在");
+
+  expect(
+    await screen.findByText("请选择一个接入节点查看详情")
+  ).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText("web-01")).not.toBeInTheDocument());
 });
 
 test("shows reported identity, management state, connectivity and last heartbeat", async () => {
@@ -348,6 +371,31 @@ test("sends asset search, tag and status filters to the server", async () => {
     expect(apiMocks.listAssets).toHaveBeenLastCalledWith(
       expect.any(String),
       expect.objectContaining({ detection_status: "success" })
+    )
+  );
+
+}, 10_000);
+
+test("sends asset sorting to the server", async () => {
+  const user = userEvent.setup();
+  renderPage();
+  await screen.findByText("web-01");
+
+  await user.click(screen.getByRole("combobox", { name: "资产排序字段" }));
+  await user.click(await screen.findByText("地址"));
+  await waitFor(() =>
+    expect(apiMocks.listAssets).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ sort_by: "address", sort_order: "asc" })
+    )
+  );
+
+  await user.click(screen.getByRole("combobox", { name: "资产排序方向" }));
+  await user.click(await screen.findByText("降序排列"));
+  await waitFor(() =>
+    expect(apiMocks.listAssets).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ sort_by: "address", sort_order: "desc" })
     )
   );
 }, 10_000);

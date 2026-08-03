@@ -17,6 +17,16 @@ HostTestCode = Literal[
     "SSH_HOST_KEY_CHANGED",
 ]
 AssetLifecycleStatus = Literal["active", "retired"]
+AssetSortField = Literal[
+    "name",
+    "address",
+    "port",
+    "username",
+    "last_test_status",
+    "last_tested_at",
+    "retired_at",
+]
+AssetSortOrder = Literal["asc", "desc"]
 
 
 def clean_text(value: str) -> str:

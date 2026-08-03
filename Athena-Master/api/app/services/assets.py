@@ -6,7 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.models.asset import HostAsset
 from app.models.registration import AccessNode
-from app.schemas.asset import AssetLifecycleStatus, HeartbeatHost, HostDetectionFilter
+from app.schemas.asset import (
+    AssetLifecycleStatus,
+    AssetSortField,
+    AssetSortOrder,
+    HeartbeatHost,
+    HostDetectionFilter,
+)
 from app.schemas.heartbeat import ConnectivityStatus
 from app.services.node_status import connectivity_status
 
@@ -77,6 +83,8 @@ class HostAssetQueryService:
         lifecycle_status: AssetLifecycleStatus | None,
         detection_status: HostDetectionFilter | None,
         tag: str | None,
+        sort_by: AssetSortField,
+        sort_order: AssetSortOrder,
         now: datetime,
     ) -> tuple[list[HostAsset], int, ConnectivityStatus]:
         node = await self.session.get(AccessNode, node_id)
@@ -99,6 +107,22 @@ class HostAssetQueryService:
             filters.append(cast(HostAsset.tags, String).contains(f'"{tag.strip()}"'))
 
         query = select(HostAsset).where(*filters)
+        sort_columns = {
+            "name": HostAsset.name,
+            "address": HostAsset.address,
+            "port": HostAsset.port,
+            "username": HostAsset.username,
+            "last_test_status": HostAsset.last_test_status,
+            "last_tested_at": HostAsset.last_tested_at,
+            "retired_at": HostAsset.retired_at,
+        }
+        sort_column = sort_columns[sort_by]
+        ordering = sort_column.desc() if sort_order == "desc" else sort_column.asc()
+        query = query.order_by(
+            sort_column.is_(None).asc(),
+            ordering,
+            HostAsset.host_id.asc(),
+        )
         total = int(
             await self.session.scalar(
                 select(func.count()).select_from(HostAsset).where(*filters)
@@ -108,9 +132,7 @@ class HostAssetQueryService:
         assets = list(
             (
                 await self.session.scalars(
-                    query.order_by(HostAsset.name.asc(), HostAsset.host_id.asc())
-                    .offset((page - 1) * page_size)
-                    .limit(page_size)
+                    query.offset((page - 1) * page_size).limit(page_size)
                 )
             ).all()
         )
