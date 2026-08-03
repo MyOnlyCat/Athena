@@ -53,6 +53,7 @@ def test_host_password_is_never_returned_and_edit_can_preserve_it(client):
 
     assert created.status_code == 201
     assert created.json()["has_password"] is True
+    assert created.json()["created_at"].endswith("Z")
     assert "password" not in created.json()
     assert "encrypted_password" not in created.json()
 
@@ -148,6 +149,7 @@ def test_first_seen_fingerprint_requires_trust_and_changed_key_is_rejected(clien
     assert changed.json()["fingerprint"] == "SHA256:changed"
     persisted = client.get(f"/api/v1/hosts/{host['id']}", headers=headers)
     assert persisted.json()["last_test_code"] == "SSH_HOST_KEY_CHANGED"
+    assert persisted.json()["last_tested_at"].endswith("Z")
     assert fake.connections[0].host_key_fingerprint is None
     assert fake.connections[1].host_key_fingerprint == "SHA256:first"
 

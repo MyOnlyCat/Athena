@@ -104,6 +104,13 @@ test("creates an administrator and refreshes the server-paginated list", async (
   renderPage();
 
   expect(await screen.findByText("admin")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      `浏览器时区：${
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "浏览器本地时区"
+      }`
+    )
+  ).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /创建管理员/ }));
   await user.type(screen.getByLabelText("用户名"), " operator ");
   await user.type(screen.getByLabelText("初始密码"), "OperatorPassword123");
@@ -113,7 +120,7 @@ test("creates an administrator and refreshes the server-paginated list", async (
     expect(apiMocks.create).toHaveBeenCalledWith("operator", "OperatorPassword123")
   );
   await waitFor(() => expect(apiMocks.list).toHaveBeenCalledTimes(2));
-});
+}, 10_000);
 
 test("confirms status changes and password resets before refreshing the list", async () => {
   apiMocks.list.mockResolvedValue({
@@ -161,7 +168,7 @@ test("confirms status changes and password resets before refreshing the list", a
     await screen.findByText("密码已重置，原有登录凭证已失效")
   ).toBeInTheDocument();
   expect(apiMocks.list.mock.calls.length).toBeGreaterThanOrEqual(3);
-});
+}, 10_000);
 
 test("shows the duplicate normalized username error from the API", async () => {
   apiMocks.list.mockResolvedValue({

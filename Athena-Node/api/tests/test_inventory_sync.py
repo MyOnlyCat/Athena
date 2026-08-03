@@ -137,6 +137,24 @@ async def test_heartbeat_connection_failure_reports_connection_state() -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_master_unavailability_uses_connection_backoff() -> None:
+    client = HeartbeatClient(
+        AppError(
+            "MASTER_TEMPORARILY_UNAVAILABLE",
+            "主节点暂时不可用，请稍后重试",
+            status_code=503,
+        )
+    )
+    sync = synchronizer(client)
+
+    with pytest.raises(AppError, match="主节点暂时不可用"):
+        await sync.sync_now()
+
+    assert sync.status == "connection_failed"
+    assert sync._retry_delay() == 5
+
+
+@pytest.mark.asyncio
 async def test_poll_failure_does_not_change_heartbeat_connection_state() -> None:
     client = HeartbeatClient()
     sync = synchronizer(client)
@@ -237,12 +255,22 @@ async def test_management_and_authentication_failures_probe_every_five_minutes(
 
 
 @pytest.mark.asyncio
-async def test_pending_approval_retries_after_normal_heartbeat_interval(
+@pytest.mark.parametrize(
+    "error",
+    [
+        AppError("NODE_NOT_APPROVED", "节点尚未批准", status_code=404),
+        AppError(
+            "REGISTRATION_REJECTED",
+            "接入申请已被拒绝，请联系管理员恢复后手动重试",
+            status_code=409,
+        ),
+    ],
+)
+async def test_unapproved_nodes_retry_after_normal_heartbeat_interval(
     monkeypatch: pytest.MonkeyPatch,
+    error: AppError,
 ) -> None:
-    client = HeartbeatClient(
-        AppError("NODE_NOT_FOUND", "接入节点不存在", status_code=404)
-    )
+    client = HeartbeatClient(error)
     sync = synchronizer(client)
     stop = asyncio.Event()
     observed_timeouts: list[float] = []

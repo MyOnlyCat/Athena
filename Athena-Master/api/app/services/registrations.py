@@ -28,6 +28,7 @@ TERMINAL_RETENTION_DAYS = 30
 NODE_RATE_WINDOW_SECONDS = 60
 IP_RATE_LIMIT = 10
 PENDING_APPLICATION_LIMIT = 1_000
+ACCESS_NODE_LIMIT = 100
 
 
 class RegistrationThrottle:
@@ -413,6 +414,15 @@ class RegistrationService:
                 "REGISTRATION_TOKEN_DUPLICATE",
                 "Token 已被其他接入节点使用",
                 status_code=409,
+            )
+        access_node_count = int(
+            await self.session.scalar(select(func.count()).select_from(AccessNode)) or 0
+        )
+        if access_node_count >= ACCESS_NODE_LIMIT:
+            raise AppError(
+                "ACCESS_NODE_CAPACITY_EXCEEDED",
+                "接入节点数量已达到 100 个支持上限",
+                status_code=422,
             )
         node = AccessNode(
             node_id=application.node_id,

@@ -2,13 +2,13 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
 from pydantic import ValidationError
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.core.time import as_utc
-from app.models.registration import AccessNode, NodeNonce
+from app.models.registration import AccessNode, NodeNonce, RegistrationApplication
 from app.schemas.heartbeat import HeartbeatPayload
 from app.schemas.registration import NONCE_PATTERN, SIGNATURE_PATTERN
 from app.services.assets import AssetSnapshotService
@@ -77,6 +77,27 @@ class HeartbeatService:
 
         node = await self.session.get(AccessNode, node_id)
         if node is None:
+            application_status = await self.session.scalar(
+                select(RegistrationApplication.status)
+                .where(RegistrationApplication.node_id == node_id)
+                .order_by(
+                    RegistrationApplication.received_at.desc(),
+                    RegistrationApplication.id.desc(),
+                )
+                .limit(1)
+            )
+            if application_status == "rejected":
+                raise AppError(
+                    "REGISTRATION_REJECTED",
+                    "接入申请已被拒绝，请联系管理员恢复后手动重试",
+                    status_code=409,
+                )
+            if application_status is not None:
+                raise AppError(
+                    "NODE_NOT_APPROVED",
+                    "节点尚未批准",
+                    status_code=404,
+                )
             raise AppError("NODE_NOT_FOUND", "接入节点不存在", status_code=404)
         token = self.cipher.decrypt(node.encrypted_token)
         if not verify_request_signature(

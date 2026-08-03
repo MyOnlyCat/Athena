@@ -21,6 +21,8 @@ async def test_bootstrap_admin_can_login_read_profile_and_logout(
     assert body["token_type"] == "bearer"
     assert body["user"]["username"] == "admin"
     assert body["user"]["is_active"] is True
+    assert body["user"]["created_at"].endswith("Z")
+    assert body["user"]["last_login_at"].endswith("Z")
     assert "password" not in str(body).lower()
 
     headers = {"Authorization": f"Bearer {body['access_token']}"}

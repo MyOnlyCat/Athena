@@ -8,7 +8,8 @@ from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy import text
 
-from app.services.crypto import CredentialCipher
+from app.models.registration import AccessNode
+from app.services.crypto import CredentialCipher, node_token_fingerprint
 from app.services.registrations import RegistrationThrottle
 
 
@@ -651,3 +652,89 @@ async def test_node_limited_attempts_still_consume_the_source_ip_limit(
     ] * 9
     assert other_node.status_code == 429
     assert other_node.json()["code"] == "REGISTRATION_RATE_LIMITED"
+
+
+@pytest.mark.asyncio
+async def test_approval_enforces_the_one_hundred_access_node_boundary(
+    client: AsyncClient,
+    app: FastAPI,
+) -> None:
+    cipher = CredentialCipher(app.state.settings.credential_key)
+    async with app.state.session_factory() as session:
+        for index in range(99):
+            token = f"seed-access-node-token-{index:03d}-123456789"
+            session.add(
+                AccessNode(
+                    node_id=f"seed-node-{index:03d}",
+                    reported_name=f"Seed node {index}",
+                    hostname=f"seed-{index:03d}",
+                    software_version="0.1.0",
+                    encrypted_token=cipher.encrypt(token),
+                    token_fingerprint=node_token_fingerprint(
+                        app.state.settings.credential_key,
+                        token,
+                    ),
+                )
+            )
+        await session.commit()
+
+    hundredth_token = "hundredth-access-node-token-value-123"
+    hundredth_body, hundredth_headers = signed_registration(hundredth_token)
+    assert (
+        await client.post(
+            "/api/node/v1/registration-applications",
+            content=hundredth_body,
+            headers=hundredth_headers,
+        )
+    ).status_code == 202
+    admin_headers = await login_headers(client)
+    applications = await client.get(
+        "/api/v1/registration-applications",
+        headers=admin_headers,
+    )
+    hundredth = await client.post(
+        f"/api/v1/registration-applications/{applications.json()['items'][0]['id']}/approve",
+        headers=admin_headers,
+        json={"token": hundredth_token},
+    )
+
+    over_limit_token = "over-limit-access-node-token-value-123"
+    over_limit_body, over_limit_headers = signed_registration(
+        over_limit_token,
+        node_id="018f47a2-4b5c-7def-8123-456789abcdee",
+        nonce="fefefefefefefefefefefefefefefefe",
+    )
+    assert (
+        await client.post(
+            "/api/node/v1/registration-applications",
+            content=over_limit_body,
+            headers=over_limit_headers,
+        )
+    ).status_code == 202
+    applications = await client.get(
+        "/api/v1/registration-applications",
+        headers=admin_headers,
+    )
+    over_limit_application = applications.json()["items"][0]
+    rejected = await client.post(
+        f"/api/v1/registration-applications/{over_limit_application['id']}/approve",
+        headers=admin_headers,
+        json={"token": over_limit_token},
+    )
+    final_applications = await client.get(
+        "/api/v1/registration-applications",
+        headers=admin_headers,
+    )
+    async with app.state.session_factory() as session:
+        node_count = (
+            await session.execute(text("SELECT count(*) FROM access_nodes"))
+        ).scalar_one()
+
+    assert hundredth.status_code == 200
+    assert rejected.status_code == 422
+    assert rejected.json() == {
+        "code": "ACCESS_NODE_CAPACITY_EXCEEDED",
+        "message": "接入节点数量已达到 100 个支持上限",
+    }
+    assert node_count == 100
+    assert final_applications.json()["items"][0]["status"] == "pending"

@@ -71,3 +71,13 @@ def test_duplicate_username_is_case_insensitive(client):
 
     assert response.status_code == 409
     assert response.json()["code"] == "USERNAME_EXISTS"
+
+
+def test_user_datetime_responses_are_utc_rfc3339(client):
+    headers = login_headers(client)
+
+    response = client.get("/api/v1/users", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()[0]["created_at"].endswith("Z")
+    assert response.json()[0]["last_login_at"].endswith("Z")

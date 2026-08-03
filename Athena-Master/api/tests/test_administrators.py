@@ -71,6 +71,7 @@ async def test_admin_can_create_an_administrator_and_normalized_duplicates_are_r
     assert created.status_code == 201
     assert created.json()["username"] == "operator"
     assert created.json()["is_active"] is True
+    assert created.json()["created_at"].endswith("Z")
     assert duplicate.status_code == 409
     assert duplicate.json() == {
         "code": "USERNAME_EXISTS",

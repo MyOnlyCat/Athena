@@ -56,6 +56,12 @@ class MasterClient:
             },
         )
         if response.is_error:
+            if response.status_code >= 500:
+                raise AppError(
+                    "MASTER_TEMPORARILY_UNAVAILABLE",
+                    "主节点暂时不可用，请稍后重试",
+                    status_code=response.status_code,
+                )
             try:
                 error = response.json()
             except ValueError:

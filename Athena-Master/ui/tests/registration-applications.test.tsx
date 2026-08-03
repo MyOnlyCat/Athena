@@ -63,6 +63,13 @@ test("marks application data untrusted and approves with a non-disclosed Token",
   renderPage();
 
   expect(await screen.findByText("上海接入节点")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      `浏览器时区：${
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "浏览器本地时区"
+      }`
+    )
+  ).toBeInTheDocument();
   expect(screen.getByText("身份未验证")).toBeInTheDocument();
   expect(screen.getByText("athena-node-01")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /批\s*准/ }));

@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.core.time import UtcDatetime
 
 
 class UserResponse(BaseModel):
@@ -9,8 +9,8 @@ class UserResponse(BaseModel):
     id: str
     username: str
     is_active: bool
-    last_login_at: datetime | None
-    created_at: datetime
+    last_login_at: UtcDatetime | None
+    created_at: UtcDatetime
 
 
 class UserCreate(BaseModel):
@@ -32,4 +32,3 @@ class UserStatusUpdate(BaseModel):
 
 class PasswordReset(BaseModel):
     password: str = Field(min_length=12, max_length=128)
-

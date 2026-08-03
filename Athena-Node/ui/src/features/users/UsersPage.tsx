@@ -15,6 +15,8 @@ export function UsersPage() {
   const query = useQuery({ queryKey: ["users"], queryFn: usersApi.list });
   const [creating, setCreating] = useState(false);
   const [form] = Form.useForm<{ username: string; password: string }>();
+  const browserTimeZone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "浏览器本地时区";
 
   const create = useMutation({
     mutationFn: ({ username, password }: { username: string; password: string }) =>
@@ -66,6 +68,7 @@ export function UsersPage() {
           <p className="eyebrow">ACCESS CONTROL</p>
           <h1>用户管理</h1>
           <p>维护可登录此子节点的管理员账号。</p>
+          <p className="muted">浏览器时区：{browserTimeZone}</p>
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreating(true)}>
           创建用户

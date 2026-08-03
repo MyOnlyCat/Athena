@@ -4,6 +4,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import to_rfc3339
 from app.models.deployment import DeploymentEvent
 
 
@@ -56,7 +57,7 @@ class EventService:
                 "sequence": event.sequence,
                 "target_id": event.target_id,
                 "type": event.event_type,
-                "occurred_at": event.created_at.isoformat(),
+                "occurred_at": to_rfc3339(event.created_at),
                 "payload": event.payload,
             }
             for event in events
@@ -69,4 +70,3 @@ class EventService:
                 event.delivered_at = now
         await self.session.commit()
         return acknowledged
-

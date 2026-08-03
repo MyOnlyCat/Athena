@@ -23,6 +23,7 @@ async def test_events_are_ordered_persisted_and_acknowledged(db_session):
 
     assert acknowledged == 2
     assert [event["sequence"] for event in fake.batches[0][1]] == [1, 2]
+    assert all(event["occurred_at"].endswith("Z") for event in fake.batches[0][1])
     events = list(
         await db_session.scalars(select(DeploymentEvent).order_by(DeploymentEvent.sequence))
     )

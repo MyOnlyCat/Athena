@@ -32,6 +32,8 @@ export function RegistrationApplicationsPage() {
     useState<RegistrationApplication | null>(null);
   const [form] = Form.useForm<{ token: string }>();
   const [rejectionForm] = Form.useForm<{ reason?: string }>();
+  const browserTimeZone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "浏览器本地时区";
   const query = useQuery({
     queryKey: ["registration-applications", page, pageSize],
     queryFn: () => registrationApplicationsApi.list(page, pageSize)
@@ -83,6 +85,7 @@ export function RegistrationApplicationsPage() {
           <p className="eyebrow">REGISTRATION APPLICATIONS</p>
           <h1>注册申请</h1>
           <p>申请资料在 Token 验证前均不可信，请通过可信渠道核对接入节点。</p>
+          <p className="muted">浏览器时区：{browserTimeZone}</p>
         </div>
       </header>
       <section className="content-card">
