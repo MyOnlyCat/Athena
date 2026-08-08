@@ -1,0 +1,72 @@
+name: athena-master
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ATHENA_MASTER_POSTGRES_DB:?set ATHENA_MASTER_POSTGRES_DB}
+      POSTGRES_USER: ${ATHENA_MASTER_POSTGRES_USER:?set ATHENA_MASTER_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${ATHENA_MASTER_POSTGRES_PASSWORD:?set ATHENA_MASTER_POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  master-api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ATHENA_MASTER_ENVIRONMENT: production
+      ATHENA_MASTER_DATABASE_URL: ${ATHENA_MASTER_DATABASE_URL:?set ATHENA_MASTER_DATABASE_URL}
+      ATHENA_MASTER_DATABASE_SCHEMA: ${ATHENA_MASTER_DATABASE_SCHEMA:-public}
+      ATHENA_MASTER_DATABASE_POOL_SIZE: ${ATHENA_MASTER_DATABASE_POOL_SIZE:-10}
+      ATHENA_MASTER_DATABASE_MAX_OVERFLOW: ${ATHENA_MASTER_DATABASE_MAX_OVERFLOW:-20}
+      ATHENA_MASTER_DATABASE_POOL_TIMEOUT_SECONDS: ${ATHENA_MASTER_DATABASE_POOL_TIMEOUT_SECONDS:-30}
+      ATHENA_MASTER_DATABASE_STATEMENT_TIMEOUT_MS: ${ATHENA_MASTER_DATABASE_STATEMENT_TIMEOUT_MS:-30000}
+      ATHENA_MASTER_DATABASE_IDLE_TRANSACTION_TIMEOUT_MS: ${ATHENA_MASTER_DATABASE_IDLE_TRANSACTION_TIMEOUT_MS:-60000}
+      ATHENA_MASTER_DATABASE_LOCK_TIMEOUT_MS: ${ATHENA_MASTER_DATABASE_LOCK_TIMEOUT_MS:-10000}
+      ATHENA_MASTER_JWT_SECRET: ${ATHENA_MASTER_JWT_SECRET:?set ATHENA_MASTER_JWT_SECRET}
+      ATHENA_MASTER_CREDENTIAL_KEY: ${ATHENA_MASTER_CREDENTIAL_KEY:?set ATHENA_MASTER_CREDENTIAL_KEY}
+      ATHENA_MASTER_BOOTSTRAP_USERNAME: ${ATHENA_MASTER_BOOTSTRAP_USERNAME:?set ATHENA_MASTER_BOOTSTRAP_USERNAME}
+      ATHENA_MASTER_BOOTSTRAP_PASSWORD: ${ATHENA_MASTER_BOOTSTRAP_PASSWORD:?set ATHENA_MASTER_BOOTSTRAP_PASSWORD}
+      ATHENA_MASTER_DATA_DIR: /data
+    ports:
+      - "127.0.0.1:${ATHENA_MASTER_API_PORT:-8001}:8001"
+    volumes:
+      - master_data:/data
+    tmpfs:
+      - /tmp
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json, urllib.request;
+          data=json.load(urllib.request.urlopen('http://127.0.0.1:8001/api/v1/health', timeout=2));
+          raise SystemExit(0 if data.get('status') == 'ok' and data.get('database') == 'ok' else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  postgres_data:
+  master_data:

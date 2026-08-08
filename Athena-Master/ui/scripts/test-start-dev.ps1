@@ -6,6 +6,7 @@ $uiRoot = Split-Path -Parent $scriptsRoot
 $masterRoot = Split-Path -Parent $uiRoot
 $apiRoot = Join-Path $masterRoot "api"
 $launcherPath = Join-Path $uiRoot "start-dev.cmd"
+$testComposePath = Join-Path $masterRoot "deploy\compose.test.yaml"
 
 if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
     throw "Expected launcher does not exist: $launcherPath"
@@ -30,6 +31,10 @@ foreach ($expected in @(
     "API_URL=http://127.0.0.1:8001",
     "UI_URL=http://127.0.0.1:5174",
     "MIGRATIONS=alembic upgrade head",
+    "DATABASE=explicit-postgresql+asyncpg",
+    "INTERNAL_POSTGRES_CONFIG=$apiRoot\tests\internal-postgres.env",
+    "DEFAULT_DATABASE_SCHEMA=athena_dev",
+    "TEST_POSTGRES_COMPOSE=$testComposePath",
     "WORKERS=1"
 )) {
     if ($output -notmatch [regex]::Escape($expected)) {
@@ -90,6 +95,56 @@ function Stop-OwnedProcess {
     }
 }
 
+function Invoke-MasterSchemaOperation {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonPath,
+        [Parameter(Mandatory = $true)][ValidateSet("create", "drop")][string]$Operation,
+        [Parameter(Mandatory = $true)][string]$Schema
+    )
+    if ($Schema -notmatch '\Aathena_smoke_[0-9a-f]{32}\z') {
+        throw "Refusing an unsafe Master startup smoke schema."
+    }
+    $schemaOperation = if ($Operation -eq "create") {
+        "create-smoke"
+    }
+    else {
+        "drop-smoke"
+    }
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $schemaOutput = (
+            & $PythonPath -m app.cli.postgres_schema $schemaOperation $Schema 2>&1 |
+                Out-String
+        )
+        $schemaExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
+    if ($schemaExitCode -ne 0) {
+        throw "Master startup smoke schema $Operation failed; output was withheld."
+    }
+}
+
+function Protect-SensitiveOutput {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    $protected = [regex]::Replace(
+        $Text,
+        'postgresql(?:\+asyncpg)?://[^\s''"]+',
+        '<redacted-postgres-url>',
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
+    foreach ($sensitive in @(
+        "athena-master-startup-smoke-secret-2026",
+        "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+        "SmokeAdminPassword123"
+    )) {
+        $protected = $protected.Replace($sensitive, "<redacted>")
+    }
+    return $protected
+}
+
 $pythonPath = Join-Path $apiRoot ".venv\Scripts\python.exe"
 $vitePath = Join-Path $uiRoot "node_modules\vite\bin\vite.js"
 $nodePath = (Get-Command -Name "node" -CommandType Application -ErrorAction Stop).Source
@@ -106,13 +161,13 @@ $smokeRoot = [System.IO.Path]::GetFullPath($smokeRoot)
 [void](New-Item -ItemType Directory -Path $smokeRoot)
 $dataRoot = Join-Path $smokeRoot "data"
 [void](New-Item -ItemType Directory -Path $dataRoot)
-$databasePath = ([System.IO.Path]::GetFullPath(
-    (Join-Path $dataRoot "athena-master.db")
-)).Replace("\", "/")
 $apiPort = Get-FreeTcpPort
 do {
     $uiPort = Get-FreeTcpPort
 } while ($uiPort -eq $apiPort)
+do {
+    $postgresPort = Get-FreeTcpPort
+} while ($postgresPort -eq $apiPort -or $postgresPort -eq $uiPort)
 $apiUrl = "http://127.0.0.1:$apiPort"
 $uiUrl = "http://127.0.0.1:$uiPort"
 $apiOutput = Join-Path $smokeRoot "api.out.log"
@@ -121,15 +176,26 @@ $uiOutput = Join-Path $smokeRoot "ui.out.log"
 $uiError = Join-Path $smokeRoot "ui.err.log"
 $apiProcess = $null
 $uiProcess = $null
+$dockerPath = $null
+$ownsTestPostgres = $false
+$testComposeProject = "athena-master-smoke-$([Guid]::NewGuid().ToString('N'))"
+$testDatabaseUrl = $null
+$smokeSchema = "athena_smoke_$([Guid]::NewGuid().ToString('N').ToLowerInvariant())"
+$smokeSchemaCreated = $false
+$operationFailed = $false
+$schemaCleanupFailed = $false
+$postgresCleanupFailed = $false
 $environmentNames = @(
     "ATHENA_MASTER_ENVIRONMENT",
     "ATHENA_MASTER_DATABASE_URL",
+    "ATHENA_MASTER_DATABASE_SCHEMA",
     "ATHENA_MASTER_JWT_SECRET",
     "ATHENA_MASTER_CREDENTIAL_KEY",
     "ATHENA_MASTER_BOOTSTRAP_USERNAME",
     "ATHENA_MASTER_BOOTSTRAP_PASSWORD",
     "ATHENA_MASTER_DATA_DIR",
-    "ATHENA_MASTER_API_TARGET"
+    "ATHENA_MASTER_API_TARGET",
+    "ATHENA_TEST_POSTGRES_PORT"
 )
 $savedEnvironment = @{}
 foreach ($name in $environmentNames) {
@@ -137,10 +203,54 @@ foreach ($name in $environmentNames) {
 }
 
 try {
-    [Environment]::SetEnvironmentVariable("ATHENA_MASTER_ENVIRONMENT", "development", "Process")
+    $testDatabaseUrl = [Environment]::GetEnvironmentVariable(
+        "ATHENA_TEST_POSTGRES_URL",
+        "Process"
+    )
+    if ([string]::IsNullOrWhiteSpace($testDatabaseUrl)) {
+        if (-not (Test-Path -LiteralPath $testComposePath -PathType Leaf)) {
+            throw "Test PostgreSQL Compose file is missing: $testComposePath"
+        }
+        $dockerCommand = Get-Command -Name "docker" -CommandType Application -ErrorAction Stop |
+            Select-Object -First 1
+        $dockerPath = $dockerCommand.Source
+        [Environment]::SetEnvironmentVariable(
+            "ATHENA_TEST_POSTGRES_PORT",
+            "$postgresPort",
+            "Process"
+        )
+        $ownsTestPostgres = $true
+        $composeOutput = & $dockerPath compose `
+            --project-name $testComposeProject `
+            -f $testComposePath `
+            up -d --wait postgres-test
+        if ($LASTEXITCODE -ne 0) {
+            throw "Disposable PostgreSQL startup failed with exit code $LASTEXITCODE."
+        }
+        if ($null -ne $composeOutput) {
+            $composeOutput | Write-Host
+        }
+        $testDatabaseUrl = (
+            "postgresql+asyncpg://athena_test:athena_test@" +
+            "127.0.0.1:$postgresPort/athena_test"
+        )
+    }
+    if (-not $testDatabaseUrl.StartsWith(
+        "postgresql+asyncpg://",
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "ATHENA_TEST_POSTGRES_URL must use postgresql+asyncpg."
+    }
+
+    [Environment]::SetEnvironmentVariable("ATHENA_MASTER_ENVIRONMENT", "test", "Process")
     [Environment]::SetEnvironmentVariable(
         "ATHENA_MASTER_DATABASE_URL",
-        "sqlite+aiosqlite:///$databasePath",
+        $testDatabaseUrl,
+        "Process"
+    )
+    [Environment]::SetEnvironmentVariable(
+        "ATHENA_MASTER_DATABASE_SCHEMA",
+        $smokeSchema,
         "Process"
     )
     [Environment]::SetEnvironmentVariable(
@@ -166,11 +276,25 @@ try {
     [Environment]::SetEnvironmentVariable("ATHENA_MASTER_DATA_DIR", $dataRoot, "Process")
     [Environment]::SetEnvironmentVariable("ATHENA_MASTER_API_TARGET", $apiUrl, "Process")
 
+    Invoke-MasterSchemaOperation `
+        -PythonPath $pythonPath `
+        -Operation "create" `
+        -Schema $smokeSchema
+    $smokeSchemaCreated = $true
+
     Push-Location -LiteralPath $apiRoot
     try {
-        & $pythonPath -m alembic upgrade head
-        if ($LASTEXITCODE -ne 0) {
-            throw "Master migration smoke test failed with code $LASTEXITCODE."
+        $savedErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $migrationOutput = (& $pythonPath -m alembic upgrade head 2>&1 | Out-String)
+            $migrationExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $savedErrorActionPreference
+        }
+        if ($migrationExitCode -ne 0) {
+            throw "Master migration smoke test failed; output was withheld."
         }
     }
     finally {
@@ -266,11 +390,13 @@ try {
     Write-Host "UI_PROXY_SMOKE_OK"
 }
 catch {
+    $operationFailed = $true
     foreach ($logPath in @($apiError, $uiError)) {
         if (Test-Path -LiteralPath $logPath -PathType Leaf) {
             $log = Get-Content -Raw -LiteralPath $logPath
             if (-not [string]::IsNullOrWhiteSpace($log)) {
-                Write-Error "$logPath`n$log" -ErrorAction Continue
+                $safeLog = Protect-SensitiveOutput -Text $log
+                Write-Error "$logPath`n$safeLog" -ErrorAction Continue
             }
         }
     }
@@ -279,6 +405,36 @@ catch {
 finally {
     Stop-OwnedProcess -Process $uiProcess
     Stop-OwnedProcess -Process $apiProcess
+    if ($smokeSchemaCreated) {
+        try {
+            Invoke-MasterSchemaOperation `
+                -PythonPath $pythonPath `
+                -Operation "drop" `
+                -Schema $smokeSchema
+        }
+        catch {
+            if ($operationFailed) {
+                Write-Warning "Master startup smoke schema cleanup failed; output was withheld."
+            }
+            else {
+                $schemaCleanupFailed = $true
+            }
+        }
+    }
+    if ($ownsTestPostgres -and $null -ne $dockerPath) {
+        & $dockerPath compose `
+            --project-name $testComposeProject `
+            -f $testComposePath `
+            down --volumes --remove-orphans
+        if ($LASTEXITCODE -ne 0) {
+            if ($operationFailed) {
+                Write-Warning "Disposable PostgreSQL cleanup failed for $testComposeProject."
+            }
+            else {
+                $postgresCleanupFailed = $true
+            }
+        }
+    }
     foreach ($name in $environmentNames) {
         [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], "Process")
     }
@@ -293,6 +449,13 @@ finally {
     ) {
         Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+if ($schemaCleanupFailed) {
+    throw "Master startup smoke schema cleanup failed; output was withheld."
+}
+if ($postgresCleanupFailed) {
+    throw "Disposable PostgreSQL cleanup failed for $testComposeProject."
 }
 
 Write-Host "PASS: Master launcher and isolated startup smoke test cover migration, bootstrap, health, proxy, and single-worker boundaries."

@@ -1,13 +1,13 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncByteStream, AsyncClient
-from sqlalchemy import insert, text
+from sqlalchemy import insert, update
 
 from app.models.asset import HostAsset
 from app.models.registration import AccessNode
@@ -90,12 +90,9 @@ def reported_hosts(
 async def allow_next_heartbeat(app: FastAPI) -> None:
     async with app.state.session_factory() as session:
         await session.execute(
-            text(
-                "UPDATE access_nodes "
-                "SET last_heartbeat_at = datetime('now', '-11 seconds') "
-                "WHERE node_id = :node_id"
-            ),
-            {"node_id": NODE_ID},
+            update(AccessNode)
+            .where(AccessNode.node_id == NODE_ID)
+            .values(last_heartbeat_at=datetime.now(UTC) - timedelta(seconds=11))
         )
         await session.commit()
 

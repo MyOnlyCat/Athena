@@ -25,7 +25,12 @@ class RegistrationApplication(Base):
     auth_nonce: Mapped[str] = mapped_column(String(32), nullable=False)
     auth_signature: Mapped[str] = mapped_column(String(64), nullable=False)
     source_ip: Mapped[str | None] = mapped_column(String(255))
-    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default="pending",
+        server_default="pending",
+        nullable=False,
+    )
     rejection_reason: Mapped[str | None] = mapped_column(String(1000))
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -49,11 +54,17 @@ class AccessNode(Base):
     management_status: Mapped[str] = mapped_column(
         String(20),
         default="active",
+        server_default="active",
         nullable=False,
     )
     display_name: Mapped[str | None] = mapped_column(String(100))
     notes: Mapped[str | None] = mapped_column(String(1000))
-    management_tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    management_tags: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
     disable_reason: Mapped[str | None] = mapped_column(String(1000))
     encrypted_token: Mapped[str] = mapped_column(String(512), nullable=False)
     token_fingerprint: Mapped[str | None] = mapped_column(

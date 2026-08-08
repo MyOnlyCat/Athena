@@ -1,4 +1,3 @@
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -8,6 +7,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import Settings
+from app.core.postgres import postgres_server_settings
 
 
 class Base(DeclarativeBase):
@@ -15,19 +15,24 @@ class Base(DeclarativeBase):
 
 
 def create_engine(settings: Settings) -> AsyncEngine:
-    engine = create_async_engine(settings.database_url, hide_parameters=True)
-
-    if settings.database_url.startswith("sqlite"):
-
-        @event.listens_for(engine.sync_engine, "connect")
-        def configure_sqlite(dbapi_connection: object, _: object) -> None:
-            cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute(f"PRAGMA busy_timeout={settings.sqlite_busy_timeout_ms}")
-            cursor.close()
-
-    return engine
+    return create_async_engine(
+        settings.database_url,
+        hide_parameters=True,
+        pool_pre_ping=True,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=settings.database_pool_timeout_seconds,
+        connect_args={
+            "server_settings": postgres_server_settings(
+                schema=settings.database_schema,
+                statement_timeout_ms=settings.database_statement_timeout_ms,
+                idle_transaction_timeout_ms=(
+                    settings.database_idle_transaction_timeout_ms
+                ),
+                lock_timeout_ms=settings.database_lock_timeout_ms,
+            )
+        },
+    )
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

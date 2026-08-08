@@ -21,7 +21,6 @@ def upgrade() -> None:
         sa.Column("last_login_at", sa.DateTime(timezone=True)),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.UniqueConstraint("normalized_username"),
     )
     op.create_index(
         "ix_users_normalized_username",
