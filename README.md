@@ -15,6 +15,10 @@ Athena-Node、Athena-Master、部署入口和项目文档。
   资产查询、节点生命周期与 Token 轮换、聚合健康概览、安全敏感操作审计、健康检查、
   中文管理界面和 Windows 本地启动入口。第一阶段按单 Master 最多 100 个接入节点、
   单进程/单 worker/本地 SQLite 的边界验收。
+- **CI/CD 第二阶段：设计已确认，尚未实施。** 已冻结单 Master + PostgreSQL、本地
+  Build Worker/Artifact Store、Docker 隔离构建、一次性预约发布、批准、Ed25519
+  Prepare/Activate 拉取协议和无代理 Linux 目标发布方案。当前代码中的开发期任务执行
+  骨架不代表第二阶段已达到生产契约。
 
 ## 仓库结构
 
@@ -113,6 +117,9 @@ Master API 和 UI 默认使用 `127.0.0.1:8001` 与 `127.0.0.1:5174`。其目录
 - [本地 API](docs/api/local-api.md)
 - [WebSocket 协议](docs/api/websocket-protocol.md)
 - [主从节点协议](docs/api/master-node-protocol.md)
+- [CI/CD 第二阶段设计](docs/superpowers/specs/2026-08-04-athena-cicd-design.md)
+- [CI/CD 第二阶段实施计划](docs/superpowers/plans/2026-08-04-athena-cicd.md)
+- [领域词汇表](CONTEXT.md)
 - [OpenAPI JSON](docs/api/openapi.json)
 - [文件传输指南](docs/node/file-transfers.md)
 - [统一样式规范](docs/node/style-guide.md)

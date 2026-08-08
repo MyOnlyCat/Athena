@@ -3,8 +3,9 @@
 Athena-Node 是部署在目标网络中的子节点，负责管理本节点可访问的 SSH 主机，提供
 网页终端和 SFTP 文件管理，并从 Athena-Master 领取制品发布任务。
 
-当前版本已部分完成，包含 API、管理界面和容器部署配置；仍需真实环境集成验证和
-生产验收。
+当前版本已部分完成，包含 API、管理界面和容器部署配置；现有发布执行代码是开发期
+骨架，尚未实现第二阶段的 Ed25519 Prepare/Activate 和完整故障语义，仍需真实环境
+集成验证和生产验收。
 
 ## 申请接入 Master
 
@@ -39,9 +40,10 @@ Master 返回结构化或非 JSON 的 5xx 时，Node 统一归一为
 “接入节点”页面输入相同值。Master 更新成功后旧 Token 立即失效，因此操作可能产生
 短暂离线；页面和 API 均不会回显保存后的 Token。
 
-请求 HMAC 只提供完整性与 Node 身份认证，不加密资产正文；跨越不可信网络时必须使用
-HTTPS/TLS。第一阶段 Master 响应没有签名，Node 不验证响应完整性或防重放，因此在
-增加响应认证并重新完成威胁建模前，不得以该响应授权远程命令执行。完整边界见
+请求 HMAC 只提供完整性与 Node 身份认证，不加密资产正文。Athena 只支持部署在防火墙、
+VLAN 或 VPN 隔离的可信管理网络，不提供 HTTPS/TLS 保密性。当前第一阶段 Master 响应
+尚未签名，因此现有响应不得作为生产远程执行授权；第二阶段将以 Ed25519
+Prepare/Activate 替换开发期任务骨架。完整边界见
 [主从节点协议](../docs/api/master-node-protocol.md)。
 
 ## 快速入口
@@ -57,6 +59,8 @@ HTTPS/TLS。第一阶段 Master 响应没有签名，Node 不验证响应完整�
 - [本地 API](../docs/api/local-api.md)
 - [WebSocket 协议](../docs/api/websocket-protocol.md)
 - [主从节点协议](../docs/api/master-node-protocol.md)
+- [CI/CD 第二阶段设计](../docs/superpowers/specs/2026-08-04-athena-cicd-design.md)
+- [CI/CD 第二阶段实施计划](../docs/superpowers/plans/2026-08-04-athena-cicd.md)
 - [OpenAPI JSON](../docs/api/openapi.json)
 - [文件传输指南](../docs/node/file-transfers.md)
 - [统一样式规范](../docs/node/style-guide.md)
@@ -70,7 +74,7 @@ Windows 启动器会在启动 API 前执行数据库迁移。对于历史版本�
 自动修改，并提示人工检查。检测码迁移会从已知检测状态和中文结果安全回填标准机器码；
 无法可靠映射的旧检测结果会重置为尚未检测，避免生成 Master 必然拒绝的心跳快照。
 
-联动升级固定先 Master、后 Node。升级前停止两端同步与服务，成套备份两个 SQLite
-数据库和凭据密钥；确认 Master 迁移、单 worker 启动与健康检查成功后，再升级 Node、
-执行迁移并验证审批状态、首次心跳和完整资产快照。回滚时必须同时恢复程序、数据库和
-对应密钥。
+本段迁移规则适用于当前第一阶段。CI/CD 第二阶段会把 Master 离线迁移到 PostgreSQL，
+并按 Master release-disabled 启动、逐 Node 升级和签名信任登记、跨 Node smoke、最后
+开放发布的顺序协调切换；详见第二阶段实施计划。回滚必须成套恢复程序、数据库、
+Artifact、日志和对应密钥。

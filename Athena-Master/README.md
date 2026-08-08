@@ -7,6 +7,10 @@ Windows 本地开发入口。已获批 Node 可发送 v1 认证心跳，管理�
 显示名、备注、管理标签、启用状态和 Node Token。系统概览使用数据库聚合查询展示节点
 管理/连接状态与资产健康；只读审计记录安全敏感和人工管理动作的成功与失败结果。
 
+CI/CD 第二阶段架构已经确认但尚未实施。目标将 Master 迁移到 PostgreSQL，并增加本地
+Build Worker、Artifact Store、Release Orchestration 和签名 Node 拉取协议；当前 SQLite
+和单 worker 描述仅代表第一阶段现状。
+
 ## 项目结构
 
 Master 与 Node 使用一致的组件布局，便于在两个独立应用之间定位同类代码；两者不互相
@@ -120,7 +124,8 @@ JSON 读取 `protocol_version`，再执行 v1 严格字段校验；任何格式�
 - 120–300 秒（含边界）：心跳延迟。
 - 超过 300 秒或从未收到心跳：离线。
 
-“接入节点”页面显示管理状态与连接状态，并将最后心跳按浏览器时区展示。对应管理 API
+“接入节点”页面当前将最后心跳按浏览器时区展示；第二阶段全部业务页面会固定为
+`Asia/Shanghai`（UTC+8）。对应管理 API
 `GET /api/v1/nodes` 提供服务端分页、文本搜索、管理/连接状态筛选及排序。
 
 桌面端将紧凑节点列表放在左侧，所选节点的完整详情与资产表放在右侧；视口小于 768px
@@ -164,10 +169,10 @@ Token 轮换不是双 Token 切换，管理员应先在 Node 本地
 “状态未知（来源节点离线）”。两种情况下仍保留最后检测状态、标准错误码和检测时间，
 避免将历史结果误报为当前健康，又不丢失排障线索。
 
-HMAC 认证不加密心跳正文；明文 HTTP 会暴露节点身份、内网地址、用户名和标签，应仅
-用于受信网络，跨越不可信网络时必须使用 HTTPS/TLS。第一阶段 Master 响应未签名，
-Node 不验证响应完整性或防重放；任务下发和远程执行必须等到重新完成威胁建模并增加
-响应认证后才能进入实现。详见[Master 与接入节点协议](../docs/api/master-node-protocol.md)。
+HMAC 认证不加密心跳正文；明文 HTTP 会暴露节点身份、内网地址、用户名和标签。Athena
+只支持防火墙、VLAN 或 VPN 隔离的可信管理网络，不提供 HTTPS/TLS 保密性。当前第一阶段
+Master 响应未签名，不能作为生产远程执行授权；第二阶段将使用 Ed25519 响应签名和
+Prepare/Activate 信封。详见[Master 与接入节点协议](../docs/api/master-node-protocol.md)。
 
 ## 健康概览
 
@@ -271,4 +276,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\test-start-dev.ps1
 ```
 
 节点通信接口见[Master 与接入节点协议](../docs/api/master-node-protocol.md)，后续工作见
-[任务清单](../TASKS.md)。
+[任务清单](../TASKS.md)。CI/CD 的权威范围与实施顺序分别见
+[第二阶段设计](../docs/superpowers/specs/2026-08-04-athena-cicd-design.md)和
+[第二阶段实施计划](../docs/superpowers/plans/2026-08-04-athena-cicd.md)。
