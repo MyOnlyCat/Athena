@@ -23,7 +23,7 @@ from app.api.v1.registration_applications import (
     node_router as registration_node_router,
 )
 from app.core.config import Settings, get_settings
-from app.core.database import Base, create_engine, create_session_factory
+from app.core.database import create_engine, create_session_factory
 from app.core.errors import (
     AppError,
     app_error_handler,
@@ -31,6 +31,7 @@ from app.core.errors import (
     temporary_unavailable_handler,
     validation_error_handler,
 )
+from app.core.migrations import require_database_at_head
 from app.services.auth import AuthService, LoginThrottle
 from app.services.heartbeats import NodeRequestThrottle
 from app.services.registrations import (
@@ -50,9 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.db_engine = engine
         app.state.session_factory = create_session_factory(engine)
         try:
-            if active_settings.environment == "test":
-                async with engine.begin() as connection:
-                    await connection.run_sync(Base.metadata.create_all)
+            await require_database_at_head(engine)
 
             if active_settings.bootstrap_username and active_settings.bootstrap_password:
                 async with app.state.session_factory() as session:

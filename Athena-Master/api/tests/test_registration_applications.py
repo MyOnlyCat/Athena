@@ -280,7 +280,7 @@ async def test_approval_rechecks_the_stored_registration_time_window(
                 "SET received_at = :received_at WHERE id = :application_id"
             ),
             {
-                "received_at": stale_received_at.isoformat(sep=" "),
+                "received_at": stale_received_at,
                 "application_id": application_id,
             },
         )
@@ -491,7 +491,7 @@ async def test_registration_enforces_node_ip_rate_limits_and_pending_capacity(
                     "(id,node_id,reported_name,hostname,software_version,raw_body,"
                     "request_path,auth_timestamp,auth_nonce,auth_signature,source_ip,"
                     "status,received_at,status_changed_at) "
-                    "VALUES (:id,:node_id,'node','host','0.1',x'7b7d','/path','0',"
+                    "VALUES (:id,:node_id,'node','host','0.1',:raw_body,'/path','0',"
                     "'00000000000000000000000000000000',"
                     "'0000000000000000000000000000000000000000000000000000000000000000',"
                     "'seed','pending',:received_at,:received_at)"
@@ -499,6 +499,7 @@ async def test_registration_enforces_node_ip_rate_limits_and_pending_capacity(
                 {
                     "id": application_id,
                     "node_id": f"018f47a2-4b5c-7def-8123-{index:012x}",
+                    "raw_body": b"{}",
                     "received_at": now,
                 },
             )

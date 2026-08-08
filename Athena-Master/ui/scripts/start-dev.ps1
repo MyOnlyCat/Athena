@@ -2,6 +2,7 @@
 param(
     [switch]$SelfTest,
     [switch]$SkipBrowser,
+    [switch]$UseTestPostgres,
     [ValidateRange(5, 300)]
     [int]$StartupTimeoutSeconds = 60
 )
@@ -13,6 +14,9 @@ $scriptsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $uiRoot = Split-Path -Parent $scriptsRoot
 $masterRoot = Split-Path -Parent $uiRoot
 $apiRoot = Join-Path $masterRoot "api"
+$testComposePath = Join-Path $masterRoot "deploy\compose.test.yaml"
+$internalPostgresConfigPath = Join-Path $apiRoot "tests\internal-postgres.env"
+$defaultDevelopmentSchema = "athena_dev"
 $apiUrl = "http://127.0.0.1:8001"
 $apiHealthUrl = "$apiUrl/api/v1/health"
 $uiUrl = "http://127.0.0.1:5174"
@@ -31,6 +35,83 @@ function Get-ApplicationCommand {
         throw "Required command '$Name' was not found in PATH."
     }
     return $command.Source
+}
+
+function Assert-PostgresUrl {
+    param([Parameter(Mandatory = $true)][string]$DatabaseUrl)
+    if (-not $DatabaseUrl.StartsWith(
+        "postgresql+asyncpg://",
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "ATHENA_MASTER_DATABASE_URL must use postgresql+asyncpg."
+    }
+}
+
+function Assert-PostgresSchema {
+    param([Parameter(Mandatory = $true)][string]$DatabaseSchema)
+    if ($DatabaseSchema -notmatch '\A[A-Za-z_][A-Za-z0-9_]{0,62}\z') {
+        throw "ATHENA_MASTER_DATABASE_SCHEMA must be a safe PostgreSQL identifier."
+    }
+}
+
+function Get-InternalPostgresConfiguration {
+    if (-not (Test-Path -LiteralPath $internalPostgresConfigPath -PathType Leaf)) {
+        throw (
+            "Internal PostgreSQL configuration is missing. Copy " +
+            "api\tests\internal-postgres.env.example to internal-postgres.env " +
+            "and fill it locally, or set ATHENA_MASTER_DATABASE_URL."
+        )
+    }
+    $lines = @(Get-Content -LiteralPath $internalPostgresConfigPath -Encoding UTF8)
+    $urlAssignments = @(
+        $lines | Where-Object { $_ -match '^\s*ATHENA_TEST_POSTGRES_URL\s*=' }
+    )
+    $schemaAssignments = @(
+        $lines | Where-Object { $_ -match '^\s*ATHENA_MASTER_DATABASE_SCHEMA\s*=' }
+    )
+    if ($urlAssignments.Count -ne 1 -or $schemaAssignments.Count -ne 1) {
+        throw (
+            "Internal PostgreSQL configuration must define URL and schema exactly once " +
+            "(URL entries: $($urlAssignments.Count), schema entries: $($schemaAssignments.Count))."
+        )
+    }
+
+    $databaseUrl = ($urlAssignments[0] -split '=', 2)[1].Trim()
+    $databaseSchema = ($schemaAssignments[0] -split '=', 2)[1].Trim()
+    Assert-PostgresUrl -DatabaseUrl $databaseUrl
+    Assert-PostgresSchema -DatabaseSchema $databaseSchema
+    return [pscustomobject]@{
+        DatabaseUrl = $databaseUrl
+        DatabaseSchema = $databaseSchema
+    }
+}
+
+function Start-TestPostgres {
+    if (-not (Test-Path -LiteralPath $testComposePath -PathType Leaf)) {
+        throw "Test PostgreSQL Compose file is missing: $testComposePath"
+    }
+    $dockerPath = Get-ApplicationCommand -Name "docker"
+    $testPort = [Environment]::GetEnvironmentVariable(
+        "ATHENA_TEST_POSTGRES_PORT",
+        "Process"
+    )
+    if ([string]::IsNullOrWhiteSpace($testPort)) {
+        $testPort = "55432"
+    }
+    $parsedPort = 0
+    if (-not [int]::TryParse($testPort, [ref]$parsedPort) -or $parsedPort -lt 1 -or $parsedPort -gt 65535) {
+        throw "ATHENA_TEST_POSTGRES_PORT must be a TCP port between 1 and 65535."
+    }
+
+    Write-Step "Starting disposable PostgreSQL..."
+    $composeOutput = & $dockerPath compose -f $testComposePath up -d --wait postgres-test
+    if ($LASTEXITCODE -ne 0) {
+        throw "Test PostgreSQL Compose startup failed with exit code $LASTEXITCODE."
+    }
+    if ($null -ne $composeOutput) {
+        $composeOutput | Write-Host
+    }
+    return "postgresql+asyncpg://athena_test:athena_test@127.0.0.1:$parsedPort/athena_test"
 }
 
 function Test-PythonVersion {
@@ -124,11 +205,43 @@ function Prepare-Api {
         }
     }
 
+    $databaseSchema = [Environment]::GetEnvironmentVariable(
+        "ATHENA_MASTER_DATABASE_SCHEMA",
+        "Process"
+    )
+    Assert-PostgresSchema -DatabaseSchema $databaseSchema
+    Write-Step "Preparing PostgreSQL development schema..."
+    Invoke-InDirectory -Path $apiRoot -Action {
+        $savedErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $schemaOutput = (
+                & $venvPython -m app.cli.postgres_schema ensure $databaseSchema 2>&1 |
+                    Out-String
+            )
+            $schemaExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $savedErrorActionPreference
+        }
+        if ($schemaExitCode -ne 0) {
+            throw "PostgreSQL development schema preparation failed; output was withheld."
+        }
+    }
+
     Write-Step "Applying database migrations..."
     Invoke-InDirectory -Path $apiRoot -Action {
-        & $venvPython -m alembic upgrade head
-        if ($LASTEXITCODE -ne 0) {
-            throw "alembic upgrade head failed."
+        $savedErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $migrationOutput = (& $venvPython -m alembic upgrade head 2>&1 | Out-String)
+            $migrationExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $savedErrorActionPreference
+        }
+        if ($migrationExitCode -ne 0) {
+            throw "alembic upgrade head failed; output was withheld."
         }
     }
     return [string]$venvPython
@@ -220,7 +333,13 @@ try {
     }
 
     if ($SelfTest) {
-        [void](Get-SystemPython)
+        $existingVenvPython = Join-Path $apiRoot ".venv\Scripts\python.exe"
+        if (-not (
+            (Test-Path -LiteralPath $existingVenvPython -PathType Leaf) -and
+            (Test-PythonVersion -FilePath $existingVenvPython)
+        )) {
+            [void](Get-SystemPython)
+        }
         Write-Host "UI_ROOT=$uiRoot"
         Write-Host "API_ROOT=$apiRoot"
         Write-Host "NODE=$nodePath"
@@ -228,6 +347,10 @@ try {
         Write-Host "API_URL=$apiUrl"
         Write-Host "UI_URL=$uiUrl"
         Write-Host "MIGRATIONS=alembic upgrade head"
+        Write-Host "DATABASE=explicit-postgresql+asyncpg"
+        Write-Host "INTERNAL_POSTGRES_CONFIG=$internalPostgresConfigPath"
+        Write-Host "DEFAULT_DATABASE_SCHEMA=$defaultDevelopmentSchema"
+        Write-Host "TEST_POSTGRES_COMPOSE=$testComposePath"
         Write-Host "WORKERS=1"
         Write-Host "SELF_TEST_OK"
         exit 0
@@ -236,6 +359,7 @@ try {
     $environmentNames = @(
         "ATHENA_MASTER_ENVIRONMENT",
         "ATHENA_MASTER_DATABASE_URL",
+        "ATHENA_MASTER_DATABASE_SCHEMA",
         "ATHENA_MASTER_JWT_SECRET",
         "ATHENA_MASTER_CREDENTIAL_KEY",
         "ATHENA_MASTER_BOOTSTRAP_USERNAME",
@@ -247,10 +371,54 @@ try {
         $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
     }
     try {
+        $databaseSchema = [Environment]::GetEnvironmentVariable(
+            "ATHENA_MASTER_DATABASE_SCHEMA",
+            "Process"
+        )
+        if ($UseTestPostgres) {
+            $databaseUrl = Start-TestPostgres
+            if ([string]::IsNullOrWhiteSpace($databaseSchema)) {
+                $databaseSchema = $defaultDevelopmentSchema
+            }
+        }
+        else {
+            $databaseUrl = [Environment]::GetEnvironmentVariable(
+                "ATHENA_MASTER_DATABASE_URL",
+                "Process"
+            )
+            if ([string]::IsNullOrWhiteSpace($databaseUrl)) {
+                $databaseUrl = [Environment]::GetEnvironmentVariable(
+                    "ATHENA_TEST_POSTGRES_URL",
+                    "Process"
+                )
+                if ([string]::IsNullOrWhiteSpace($databaseUrl)) {
+                    $internalConfiguration = Get-InternalPostgresConfiguration
+                    $databaseUrl = $internalConfiguration.DatabaseUrl
+                    if ([string]::IsNullOrWhiteSpace($databaseSchema)) {
+                        $databaseSchema = $internalConfiguration.DatabaseSchema
+                    }
+                    Write-Step "Using local internal PostgreSQL development configuration."
+                }
+                elseif ([string]::IsNullOrWhiteSpace($databaseSchema)) {
+                    $databaseSchema = $defaultDevelopmentSchema
+                }
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($databaseSchema)) {
+            $databaseSchema = "public"
+        }
+        Assert-PostgresUrl -DatabaseUrl $databaseUrl
+        Assert-PostgresSchema -DatabaseSchema $databaseSchema
+
         [Environment]::SetEnvironmentVariable("ATHENA_MASTER_ENVIRONMENT", "development", "Process")
         [Environment]::SetEnvironmentVariable(
             "ATHENA_MASTER_DATABASE_URL",
-            "sqlite+aiosqlite:///./data/athena-master.db",
+            $databaseUrl,
+            "Process"
+        )
+        [Environment]::SetEnvironmentVariable(
+            "ATHENA_MASTER_DATABASE_SCHEMA",
+            $databaseSchema,
             "Process"
         )
         [Environment]::SetEnvironmentVariable(

@@ -15,6 +15,7 @@
 *.tsbuildinfo
 **/vite.config.js
 **/vite.config.d.ts
+/Athena-Master/api/tests/internal-postgres.env
 coverage/
 .worktrees/
 preview-*.log

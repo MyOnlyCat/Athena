@@ -1,15 +1,16 @@
 import asyncio
 import base64
 import os
+import re
 import secrets
 import socket
 import subprocess
-import sys
 import time
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 import httpx
 import pytest
@@ -30,6 +31,48 @@ MASTER_PASSWORD = "MasterIntegrationPassw0rd!"
 NODE_USERNAME = "admin"
 NODE_PASSWORD = "NodeIntegrationPassw0rd!"
 CREDENTIAL_KEY = "4UlSOndzr4KYLmDMK5T5OmRsWLOtqzmNe01_sucGm2o="
+MASTER_SCHEMA_PATTERN = re.compile(r"athena_node_test_[0-9a-f]{32}")
+MASTER_SCHEMA_COMMAND = r"""
+import asyncio
+import os
+import re
+import sys
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+
+async def main() -> None:
+    operation, schema = sys.argv[1:]
+    if re.fullmatch(r"athena_node_test_[0-9a-f]{32}", schema) is None:
+        raise RuntimeError("unsafe integration schema")
+    engine = create_async_engine(
+        os.environ["ATHENA_TEST_POSTGRES_URL"],
+        hide_parameters=True,
+    )
+    try:
+        async with engine.begin() as connection:
+            quoted = connection.dialect.identifier_preparer.quote(schema)
+            if operation == "create":
+                await connection.execute(text(f"CREATE SCHEMA {quoted}"))
+            elif operation == "drop":
+                await connection.execute(text(f"DROP SCHEMA {quoted} CASCADE"))
+            else:
+                raise RuntimeError("unsupported schema operation")
+    finally:
+        await engine.dispose()
+
+
+asyncio.run(main())
+"""
+
+
+class _RedactedEnvironment(dict[str, str]):
+    def __repr__(self) -> str:
+        return "<redacted Master subprocess environment>"
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
 
 def _base64url_token() -> str:
@@ -42,17 +85,48 @@ def _free_local_port() -> int:
         return int(listener.getsockname()[1])
 
 
-def _master_environment(tmp_path: Path) -> dict[str, str]:
-    database_path = (tmp_path / "master.db").resolve()
+def _master_python() -> Path:
+    candidates = (
+        MASTER_API_ROOT / ".venv" / "Scripts" / "python.exe",
+        MASTER_API_ROOT / ".venv" / "bin" / "python",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    pytest.fail("Master virtual-environment Python is required for this integration test")
+
+
+def _test_postgres_url() -> str:
+    database_url = os.environ.get("ATHENA_TEST_POSTGRES_URL", "").strip()
+    if not database_url:
+        pytest.fail("ATHENA_TEST_POSTGRES_URL is required for this integration test")
+    if not database_url.startswith("postgresql+asyncpg://"):
+        pytest.fail("ATHENA_TEST_POSTGRES_URL must use postgresql+asyncpg")
+    return database_url
+
+
+def _master_schema_name() -> str:
+    schema = f"athena_node_test_{secrets.token_hex(16)}"
+    if MASTER_SCHEMA_PATTERN.fullmatch(schema) is None:
+        raise AssertionError("generated an unsafe Master integration schema")
+    return schema
+
+
+def _validate_master_schema(schema: str) -> None:
+    if MASTER_SCHEMA_PATTERN.fullmatch(schema) is None:
+        raise ValueError("refusing an unsafe Master integration schema")
+
+
+def _master_environment(tmp_path: Path, schema: str) -> _RedactedEnvironment:
+    _validate_master_schema(schema)
     data_dir = (tmp_path / "master-data").resolve()
     data_dir.mkdir()
-    environment = os.environ.copy()
+    environment = _RedactedEnvironment(os.environ.copy())
     environment.update(
         {
-            "ATHENA_MASTER_ENVIRONMENT": "development",
-            "ATHENA_MASTER_DATABASE_URL": (
-                f"sqlite+aiosqlite:///{database_path.as_posix()}"
-            ),
+            "ATHENA_MASTER_ENVIRONMENT": "test",
+            "ATHENA_MASTER_DATABASE_URL": _test_postgres_url(),
+            "ATHENA_MASTER_DATABASE_SCHEMA": schema,
             "ATHENA_MASTER_JWT_SECRET": "master-integration-jwt-secret-32-characters",
             "ATHENA_MASTER_CREDENTIAL_KEY": CREDENTIAL_KEY,
             "ATHENA_MASTER_BOOTSTRAP_USERNAME": MASTER_USERNAME,
@@ -67,24 +141,92 @@ def _master_environment(tmp_path: Path) -> dict[str, str]:
     return environment
 
 
-def _run_master_migrations(environment: dict[str, str]) -> None:
-    completed = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        cwd=MASTER_API_ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        check=False,
-    )
+def _redact_master_output(output: str, environment: _RedactedEnvironment) -> str:
+    redacted = output
+    database_url = environment.get("ATHENA_TEST_POSTGRES_URL", "")
+    sensitive_values = {
+        database_url,
+        environment.get("ATHENA_MASTER_DATABASE_URL", ""),
+        environment.get("ATHENA_MASTER_CREDENTIAL_KEY", ""),
+        environment.get("ATHENA_MASTER_JWT_SECRET", ""),
+        environment.get("ATHENA_MASTER_BOOTSTRAP_PASSWORD", ""),
+    }
+    if database_url:
+        try:
+            parsed = urlsplit(database_url)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            sensitive_values.update(
+                {
+                    parsed.username or "",
+                    parsed.password or "",
+                    unquote(parsed.username or ""),
+                    unquote(parsed.password or ""),
+                    database_url.replace("postgresql+asyncpg://", "postgresql://", 1),
+                }
+            )
+    for value in sorted((item for item in sensitive_values if item), key=len, reverse=True):
+        redacted = redacted.replace(value, "<redacted>")
+    return redacted or "<no subprocess output>"
+
+
+def _run_master_command(
+    master_python: Path,
+    arguments: list[str],
+    environment: _RedactedEnvironment,
+    *,
+    operation: str,
+) -> None:
+    try:
+        completed = subprocess.run(
+            [str(master_python), *arguments],
+            cwd=MASTER_API_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"{operation} timed out; subprocess output was withheld")
+    except OSError:
+        pytest.fail(f"{operation} could not start; subprocess output was withheld")
     if completed.returncode != 0:
         pytest.fail(
-            "Master migration failed\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
+            f"{operation} failed\n"
+            f"stdout:\n{_redact_master_output(completed.stdout, environment)}\n"
+            f"stderr:\n{_redact_master_output(completed.stderr, environment)}"
         )
+
+
+def _run_master_schema_command(
+    master_python: Path,
+    environment: _RedactedEnvironment,
+    schema: str,
+    operation: str,
+) -> None:
+    _validate_master_schema(schema)
+    _run_master_command(
+        master_python,
+        ["-c", MASTER_SCHEMA_COMMAND, operation, schema],
+        environment,
+        operation=f"Master test schema {operation}",
+    )
+
+
+def _run_master_migrations(
+    master_python: Path,
+    environment: _RedactedEnvironment,
+) -> None:
+    _run_master_command(
+        master_python,
+        ["-m", "alembic", "upgrade", "head"],
+        environment,
+        operation="Master migration",
+    )
 
 
 def _wait_for_master(base_url: str, process: subprocess.Popen[str]) -> None:
@@ -110,7 +252,10 @@ def _wait_for_master(base_url: str, process: subprocess.Popen[str]) -> None:
     raise TimeoutError(f"Master health check timed out; last error: {last_error!r}")
 
 
-def _stop_process(process: subprocess.Popen[str]) -> str:
+def _stop_process(
+    process: subprocess.Popen[str],
+    environment: _RedactedEnvironment,
+) -> str:
     if process.poll() is None:
         process.terminate()
     try:
@@ -118,55 +263,93 @@ def _stop_process(process: subprocess.Popen[str]) -> str:
     except subprocess.TimeoutExpired:
         process.kill()
         output, _ = process.communicate(timeout=5)
-    return output or "<no subprocess output>"
+    return _redact_master_output(output, environment)
 
 
 @contextmanager
 def _running_master(tmp_path: Path) -> Iterator[str]:
-    environment = _master_environment(tmp_path)
-    _run_master_migrations(environment)
-    port = _free_local_port()
-    base_url = f"http://127.0.0.1:{port}"
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "app.main:create_app",
-            "--factory",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--workers",
-            "1",
-            "--log-level",
-            "warning",
-        ],
-        cwd=MASTER_API_ROOT,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    schema = _master_schema_name()
+    environment = _master_environment(tmp_path, schema)
+    master_python = _master_python()
+    process: subprocess.Popen[str] | None = None
+    schema_created = False
     active_error: BaseException | None = None
     try:
-        _wait_for_master(base_url, process)
-        yield base_url
-    except BaseException as exc:
-        active_error = exc
-        raise
-    finally:
-        exited_early = process.poll() is not None
-        output = _stop_process(process)
-        if active_error is not None:
-            active_error.add_note(f"Master subprocess output:\n{output}")
-        elif exited_early:
-            raise AssertionError(
-                f"Master exited unexpectedly with code {process.returncode}\n{output}"
+        try:
+            _run_master_schema_command(
+                master_python,
+                environment,
+                schema,
+                "create",
             )
+            schema_created = True
+            _run_master_migrations(master_python, environment)
+            port = _free_local_port()
+            base_url = f"http://127.0.0.1:{port}"
+            try:
+                process = subprocess.Popen(
+                    [
+                        str(master_python),
+                        "-m",
+                        "uvicorn",
+                        "app.main:create_app",
+                        "--factory",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        str(port),
+                        "--workers",
+                        "1",
+                        "--log-level",
+                        "warning",
+                    ],
+                    cwd=MASTER_API_ROOT,
+                    env=environment,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            except OSError:
+                pytest.fail("Master process could not start; subprocess output was withheld")
+            _wait_for_master(base_url, process)
+            yield base_url
+        except BaseException as exc:
+            active_error = exc
+            raise
+    finally:
+        process_error: AssertionError | None = None
+        if process is not None:
+            exited_early = process.poll() is not None
+            output = _stop_process(process, environment)
+            if active_error is not None:
+                active_error.add_note(f"Master subprocess output:\n{output}")
+            elif exited_early:
+                process_error = AssertionError(
+                    f"Master exited unexpectedly with code {process.returncode}\n{output}"
+                )
+        if schema_created:
+            try:
+                _run_master_schema_command(
+                    master_python,
+                    environment,
+                    schema,
+                    "drop",
+                )
+            except BaseException as cleanup_error:
+                if active_error is not None:
+                    active_error.add_note(
+                        "Master test schema cleanup failed; sensitive output was withheld"
+                    )
+                elif process_error is not None:
+                    process_error.add_note(
+                        "Master test schema cleanup failed; sensitive output was withheld"
+                    )
+                else:
+                    raise cleanup_error
+        if process_error is not None:
+            raise process_error
 
 
 @asynccontextmanager

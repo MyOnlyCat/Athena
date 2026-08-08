@@ -1,0 +1,16 @@
+.env
+.venv/
+data/
+tests/
+*.db
+*.db-shm
+*.db-wal
+*.egg-info/
+*.log
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy*/
+.codex-mypy*/
+**/__pycache__/
+**/*.py[cod]
